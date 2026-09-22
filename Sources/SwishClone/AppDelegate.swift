@@ -35,10 +35,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // gestes sont captables globalement, sans activer notre fenêtre.
         GlobalGestureMonitor.start()
 
-        // Prototype isolé (voir TitlebarTrackingPanel.swift) : panel qui
-        // suit la barre de titre de la fenêtre active, en parallèle de la
-        // fenêtre de test fixe existante.
-        TitlebarTrackingPanel.start()
+        // TitlebarTrackingPanel n'est plus démarré : approche obsolète
+        // depuis EventTapGestureMonitor (CGEventTap), qui n'affiche aucune
+        // fenêtre et ne peut donc bloquer aucun bouton. Fichier gardé
+        // dans le repo pour référence.
 
         // Prototype isolé (voir EventTapGestureMonitor.swift) : capture
         // des gestes via CGEventTap, sans passer par aucune NSView/NSWindow.

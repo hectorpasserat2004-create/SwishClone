@@ -90,6 +90,44 @@ public enum WindowController {
         return positionResult == .success && sizeResult == .success
     }
 
+    // MARK: - Plein écran natif
+
+    /// Attribut Accessibility non documenté officiellement par Apple,
+    /// mais largement utilisé par les outils d'automatisation existants
+    /// (équivalent de `kAXFullScreenAttribute`) : bascule le vrai plein
+    /// écran natif macOS (bouton vert), qui donne son propre bureau/Space
+    /// à la fenêtre — différent de `moveAndResize` qui redimensionne
+    /// juste la fenêtre pour remplir l'écran sans changer de bureau.
+    private static let fullScreenAttributeName = "AXFullScreen" as CFString
+
+    /// Lit l'état actuel de `AXFullScreen` et le bascule (true -> false,
+    /// false -> true) — un pinch out répété fait donc entrer ET sortir du
+    /// plein écran natif, comme recliquer sur le bouton vert. Ne plante
+    /// jamais : certaines apps ne supportent ni la lecture ni l'écriture
+    /// de cet attribut, auquel cas on logge et on ne fait rien.
+    @discardableResult
+    public static func toggleNativeFullScreen(window: AXUIElement) -> Bool {
+        var value: AnyObject?
+        let readResult = AXUIElementCopyAttributeValue(window, fullScreenAttributeName, &value)
+
+        guard readResult == .success, let currentValue = (value as? NSNumber)?.boolValue else {
+            debugLog("AXFullScreen illisible sur cette fenêtre (result=\(readResult.rawValue)) — "
+                + "app probablement non compatible, pas de bascule.")
+            return false
+        }
+
+        let newValue: CFBoolean = currentValue ? kCFBooleanFalse : kCFBooleanTrue
+        let setResult = AXUIElementSetAttributeValue(window, fullScreenAttributeName, newValue)
+
+        guard setResult == .success else {
+            debugLog("AXFullScreen non modifiable sur cette fenêtre (result=\(setResult.rawValue)) — "
+                + "app probablement non compatible, pas de bascule.")
+            return false
+        }
+
+        return true
+    }
+
     // MARK: - Mapping gestes -> actions
 
     /// Fraction de l'écran occupée par la fenêtre lors d'un pinch in.
@@ -155,7 +193,10 @@ public enum WindowController {
                 height: screenFrame.height
             )
 
-        case .swipe(direction: .up, fingers: _), .pinch(direction: .out, fingers: _):
+        case .swipe(direction: .up, fingers: _):
+            // Plein écran "classique" : redimensionne pour remplir
+            // l'écran, reste sur le même bureau/Space. Différent de
+            // pinch out, qui bascule le vrai plein écran natif macOS.
             moveAndResize(
                 window: window,
                 x: 0,
@@ -163,6 +204,9 @@ public enum WindowController {
                 width: screenFrame.width,
                 height: screenFrame.height
             )
+
+        case .pinch(direction: .out, fingers: _):
+            toggleNativeFullScreen(window: window)
 
         case .swipe(direction: .down, fingers: _):
             // Repose sur AXMinimizedAttribute : fonctionne pour la grande

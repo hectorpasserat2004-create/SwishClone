@@ -217,6 +217,15 @@ enum EventTapGestureMonitor {
         let direction: PinchDirection = peak > 0 ? .out : .in_
         let gesture = Gesture.pinch(direction: direction, fingers: 2)
         print("[EventTapGestureMonitor] fin de session pinch : peak=\(peak) (dernier=\(last)) -> retenu, \(gesture)")
+
+        // Le diagnostic ci-dessus s'affiche toujours, où que soit le
+        // curseur — seule l'action finale sur la fenêtre est conditionnée
+        // à la zone (mode "Menubar" façon Swish).
+        guard GestureZone.isCursorInTopBand() else {
+            print("[EventTapGestureMonitor] pinch ignoré : curseur hors zone")
+            return
+        }
+
         WindowController.handleGesture(gesture)
     }
 }
