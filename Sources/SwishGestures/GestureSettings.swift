@@ -1,4 +1,5 @@
 import Foundation
+import SwishCloneCore
 
 /// Réglages des gestes, persistés dans `UserDefaults` à chaque changement
 /// et lus à chaque geste par les moniteurs et `WindowController` — un
@@ -26,6 +27,8 @@ public final class GestureSettings: ObservableObject {
         static let animationDuration = "com.swishclone.animationDuration"
         static let swipeEnabled = "com.swishclone.swipeEnabled"
         static let pinchEnabled = "com.swishclone.pinchEnabled"
+        static let stepPause = "com.swishclone.stepPause"
+        static let cancelTimeout = "com.swishclone.cancelTimeout"
     }
 
     /// Somme cumulée de scroll en dessous de laquelle un swipe est ignoré.
@@ -57,7 +60,30 @@ public final class GestureSettings: ObservableObject {
         didSet { defaults.set(pinchEnabled, forKey: Key.pinchEnabled) }
     }
 
+    /// Immobilité, en secondes, qui valide une étape du geste et permet
+    /// d'en enchaîner une autre sans lever les doigts (↓ puis → = quart).
+    @Published public var stepPause: Double {
+        didSet { defaults.set(stepPause, forKey: Key.stepPause) }
+    }
+
+    /// Immobilité, en secondes, qui annule le geste en cours.
+    @Published public var cancelTimeout: Double {
+        didSet { defaults.set(cancelTimeout, forKey: Key.cancelTimeout) }
+    }
+
     private let defaults = UserDefaults.standard
+
+    /// Les réglages dont la machine à états a besoin, figés en une valeur.
+    public var machineConfiguration: GestureStateMachine.Configuration {
+        var configuration = GestureStateMachine.Configuration()
+        configuration.swipeEnabled = swipeEnabled
+        configuration.pinchEnabled = pinchEnabled
+        configuration.swipeThreshold = swipeThreshold
+        configuration.pinchThreshold = pinchThreshold
+        configuration.stepPause = stepPause
+        configuration.cancelTimeout = cancelTimeout
+        return configuration
+    }
 
     private init() {
         // `object(forKey:) as? T ?? défaut` plutôt que `double(forKey:)` :
@@ -69,5 +95,7 @@ public final class GestureSettings: ObservableObject {
         animationDuration = defaults.object(forKey: Key.animationDuration) as? Double ?? 0.2
         swipeEnabled = defaults.object(forKey: Key.swipeEnabled) as? Bool ?? true
         pinchEnabled = defaults.object(forKey: Key.pinchEnabled) as? Bool ?? true
+        stepPause = defaults.object(forKey: Key.stepPause) as? Double ?? 0.3
+        cancelTimeout = defaults.object(forKey: Key.cancelTimeout) as? Double ?? 0.8
     }
 }

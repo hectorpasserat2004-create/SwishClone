@@ -392,6 +392,20 @@ final class GestureStateMachineTests: XCTestCase {
         XCTAssertEqual(driver.commits, [.toggleFullScreen, .centerReduced])
     }
 
+    // MARK: - Remise à zéro
+
+    func testResetAbandonsTheGestureWithoutActingAndHidesThePreview() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dx: 40)
+        XCTAssertEqual(driver.machine.reset(), [.hidePreview])
+        XCTAssertFalse(driver.machine.isTracking)
+        XCTAssertNil(driver.machine.nextDeadline)
+
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [], "la fin d'un geste abandonné ne déclenche rien")
+    }
+
     // MARK: - Échéances
 
     func testNoDeadlineWhenIdle() {

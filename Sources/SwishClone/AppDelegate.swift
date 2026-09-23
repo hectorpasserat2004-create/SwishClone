@@ -34,7 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setUpStatusItem()
 
         // TitlebarTrackingPanel n'est plus démarré : approche obsolète
-        // depuis EventTapGestureMonitor (CGEventTap), qui n'affiche aucune
+        // depuis le CGEventTap (GestureEventTap), qui n'affiche aucune
         // fenêtre et ne peut donc bloquer aucun bouton. Fichier gardé
         // dans le repo pour référence.
 

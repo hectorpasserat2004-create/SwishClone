@@ -59,6 +59,21 @@ struct SettingsView: View {
                     Text("Plus le seuil est bas, plus le geste se déclenche facilement.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    sliderRow(
+                        "Pause d'étape",
+                        value: $settings.stepPause,
+                        range: 0.15...0.5,
+                        display: String(format: "%.2f s", settings.stepPause)
+                    )
+                    sliderRow(
+                        "Annulation",
+                        value: $settings.cancelTimeout,
+                        range: 0.6...2,
+                        display: String(format: "%.1f s", settings.cancelTimeout)
+                    )
+                    Text("Sans lever les doigts, une pause valide la direction et permet d'en enchaîner une autre (bas puis droite = quart en bas à droite). Rester immobile plus longtemps annule le geste, comme Échap.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                 case .zone:
                     sliderRow(

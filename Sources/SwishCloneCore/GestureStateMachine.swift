@@ -184,6 +184,18 @@ public struct GestureStateMachine: Sendable {
         }
     }
 
+    /// Abandonne tout geste en cours, sans action ni retour haptique.
+    ///
+    /// Pour l'hôte dont le tap vient d'être coupé par macOS : des
+    /// événements ont été perdus, le geste en cours n'a plus de fin fiable.
+    /// Rend l'effet qui masque l'aperçu s'il était affiché.
+    public mutating func reset() -> [Effect] {
+        var effects: [Effect] = []
+        show(nil, effects: &effects)
+        state = .idle
+        return effects
+    }
+
     // MARK: - Entrée
 
     /// `isOnTarget` n'est appelé qu'au début d'un geste — jamais pendant.
