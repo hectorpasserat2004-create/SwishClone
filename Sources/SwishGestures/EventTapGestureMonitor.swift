@@ -79,6 +79,8 @@ enum EventTapGestureMonitor {
     /// fin de session, ce qui rejetait à tort des pinchs pourtant nets.
     private static var peakPinchMagnitude: Float = 0
     private static var pinchSessionTimer: Timer?
+    /// La fenêtre visée, décidée au premier événement du pincement.
+    private static var sessionTarget: GestureTarget.Target?
 
     private static var eventTap: CFMachPort?
     private static var runLoopSource: CFRunLoopSource?
@@ -141,6 +143,7 @@ enum EventTapGestureMonitor {
         pinchSessionActive = false
         lastPinchMagnitude = 0
         peakPinchMagnitude = 0
+        sessionTarget = nil
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
@@ -184,6 +187,7 @@ enum EventTapGestureMonitor {
         let magnitude = Float(viaDoubleField)
 
         let isNewSession = !pinchSessionActive
+        if isNewSession { sessionTarget = GestureTarget.underCursor() }
         pinchSessionActive = true
         lastPinchMagnitude = magnitude
         // Remise à zéro propre du pic au tout premier event d'une
@@ -205,6 +209,8 @@ enum EventTapGestureMonitor {
         guard pinchSessionActive else { return }
         let peak = peakPinchMagnitude
         let last = lastPinchMagnitude
+        let target = sessionTarget
+        sessionTarget = nil
         pinchSessionActive = false
         lastPinchMagnitude = 0
         peakPinchMagnitude = 0
@@ -225,15 +231,15 @@ enum EventTapGestureMonitor {
         let gesture = Gesture.pinch(direction: direction, fingers: 2)
         print("[EventTapGestureMonitor] fin de session pinch : peak=\(peak) (dernier=\(last)) -> retenu, \(gesture)")
 
-        // Le diagnostic ci-dessus s'affiche toujours, où que soit le
-        // curseur — seule l'action finale sur la fenêtre est conditionnée
-        // à la zone (mode "Menubar" façon Swish).
-        guard GestureZone.isCursorInActiveWindowTitlebar() else {
-            print("[EventTapGestureMonitor] pinch ignoré : curseur hors zone")
+        // Le diagnostic ci-dessus s'affiche toujours ; seule l'action est
+        // conditionnée à la cible, décidée au début du pincement.
+        guard let target else {
+            print("[EventTapGestureMonitor] pinch ignoré : pas de barre de titre sous le curseur au début du geste")
             return
         }
 
-        WindowController.handleGesture(gesture)
+        guard let action = GestureSequence.resolve(pinches: [direction]) else { return }
+        WindowController.perform(action, on: target.window)
     }
 }
 

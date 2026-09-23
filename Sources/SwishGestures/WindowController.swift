@@ -11,7 +11,8 @@ import SwishCloneCore
 /// `@MainActor` : le timer d'animation et le cooldown sont un état
 /// partagé sans verrou, et tout ce qui appelle ce type (moniteurs,
 /// `TouchGestureView`, interface) est déjà sur le thread principal. Seules
-/// les deux fonctions de permission, sans état, restent `nonisolated`.
+/// les fonctions sans état — permission, lecture de position et de taille —
+/// restent `nonisolated`, pour `GestureTarget` et le futur thread du tap.
 @MainActor
 public enum WindowController {
 
@@ -51,7 +52,7 @@ public enum WindowController {
 
     // MARK: - Lecture position/taille
 
-    public static func position(of window: AXUIElement) -> CGPoint? {
+    nonisolated public static func position(of window: AXUIElement) -> CGPoint? {
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &value) == .success,
               let axValue = value else { return nil }
@@ -61,7 +62,7 @@ public enum WindowController {
         return point
     }
 
-    public static func size(of window: AXUIElement) -> CGSize? {
+    nonisolated public static func size(of window: AXUIElement) -> CGSize? {
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &value) == .success,
               let axValue = value else { return nil }
@@ -71,7 +72,7 @@ public enum WindowController {
         return size
     }
 
-    public static func frame(of window: AXUIElement) -> CGRect? {
+    nonisolated public static func frame(of window: AXUIElement) -> CGRect? {
         guard let position = position(of: window), let size = size(of: window) else { return nil }
         return CGRect(origin: position, size: size)
     }
@@ -208,10 +209,7 @@ public enum WindowController {
         return true
     }
 
-    // MARK: - Mapping gestes -> actions
-
-    /// Fraction de l'écran occupée par la fenêtre lors d'un pinch in.
-    private static let pinchInScale: CGFloat = 0.6
+    // MARK: - Actions
 
     /// Délai minimum entre deux actions de fenêtre déclenchées par geste,
     /// pour éviter qu'une même intention ne se ré-applique en double si le
@@ -225,12 +223,63 @@ public enum WindowController {
         }
     }
 
-    /// Applique l'action correspondant au geste détecté sur la fenêtre
-    /// actuellement au premier plan. Ne fait rien (sans planter) si la
-    /// permission Accessibility manque, si aucune fenêtre n'est trouvée,
-    /// si c'est notre propre fenêtre de test qui est au premier plan, ou
-    /// si on est encore dans la période de cooldown suivant la dernière
-    /// action.
+    /// Applique `action` à `window` — la fenêtre visée par le geste, pas
+    /// forcément celle au premier plan. Ne fait rien (sans planter) si la
+    /// permission Accessibility manque ou pendant le cooldown.
+    ///
+    /// **L'écran de référence est celui de la fenêtre**, et sa zone utile
+    /// (`visibleFrame` : sans la barre de menus ni le Dock). Avant, c'était
+    /// `NSScreen.main` — l'écran de la fenêtre *active* — et son cadre entier
+    /// posé en (0, 0) : faux dès qu'on vise une fenêtre sur un autre écran.
+    public static func perform(_ action: WindowAction, on window: AXUIElement) {
+        guard isAccessibilityTrusted() else { return }
+
+        if let lastActionDate, Date().timeIntervalSince(lastActionDate) < actionCooldown {
+            debugLog("action ignorée : cooldown actif (\(Date().timeIntervalSince(lastActionDate))s < \(actionCooldown)s)")
+            return
+        }
+        lastActionDate = Date()
+
+        switch action {
+        case .minimize:
+            // Repose sur AXMinimizedAttribute : fonctionne pour la grande
+            // majorité des apps AppKit, mais certaines fenêtres (panneaux
+            // système, certaines apps non standard) peuvent l'ignorer
+            // silencieusement — l'API ne donne aucun moyen fiable de le
+            // détecter à l'avance.
+            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
+
+        case .toggleFullScreen:
+            toggleNativeFullScreen(window: window)
+
+        default:
+            guard let current = frame(of: window),
+                  let visible = visibleFrame(forWindowAt: current),
+                  let target = WindowLayout.frame(for: action, in: visible) else {
+                debugLog("action \(action) impossible : cadre ou écran introuvable")
+                return
+            }
+            animatedMoveAndResize(
+                window: window,
+                x: target.minX,
+                y: target.minY,
+                width: target.width,
+                height: target.height
+            )
+        }
+    }
+
+    /// La zone utile de l'écran qui porte la fenêtre, en coordonnées AX.
+    static func visibleFrame(forWindowAt windowFrame: CGRect) -> CGRect? {
+        let screens = NSScreen.screens
+        guard let primaryHeight = screens.first?.frame.height else { return nil }
+        let frames = screens.map { ScreenGeometry.axRect(fromCocoa: $0.frame, primaryScreenHeight: primaryHeight) }
+        guard let index = ScreenGeometry.screenIndex(for: windowFrame, among: frames) else { return nil }
+        return ScreenGeometry.axRect(fromCocoa: screens[index].visibleFrame, primaryScreenHeight: primaryHeight)
+    }
+
+    /// Chemin de la fenêtre de test locale (`TouchGestureView`) : agit sur
+    /// la fenêtre au premier plan, et jamais sur la nôtre.
     public static func handleGesture(_ gesture: Gesture) {
         guard isAccessibilityTrusted() else {
             requestAccessibilityPermission()
@@ -242,73 +291,14 @@ public enum WindowController {
             return
         }
 
-        guard let window = getFrontmostWindow(), let screen = NSScreen.main else { return }
-
-        if case .tap = gesture { return }
-
-        if let lastActionDate, Date().timeIntervalSince(lastActionDate) < actionCooldown {
-            debugLog("geste ignoré : cooldown actif (\(Date().timeIntervalSince(lastActionDate))s < \(actionCooldown)s)")
-            return
-        }
-        lastActionDate = Date()
-
-        let screenFrame = screen.frame
-
+        let action: WindowAction?
         switch gesture {
-        case .swipe(direction: .left, fingers: _):
-            animatedMoveAndResize(
-                window: window,
-                x: 0,
-                y: 0,
-                width: screenFrame.width / 2,
-                height: screenFrame.height
-            )
-
-        case .swipe(direction: .right, fingers: _):
-            animatedMoveAndResize(
-                window: window,
-                x: screenFrame.width / 2,
-                y: 0,
-                width: screenFrame.width / 2,
-                height: screenFrame.height
-            )
-
-        case .swipe(direction: .up, fingers: _):
-            // Plein écran "classique" : redimensionne pour remplir
-            // l'écran, reste sur le même bureau/Space. Différent de
-            // pinch out, qui bascule le vrai plein écran natif macOS.
-            animatedMoveAndResize(
-                window: window,
-                x: 0,
-                y: 0,
-                width: screenFrame.width,
-                height: screenFrame.height
-            )
-
-        case .pinch(direction: .out, fingers: _):
-            toggleNativeFullScreen(window: window)
-
-        case .swipe(direction: .down, fingers: _):
-            // Repose sur AXMinimizedAttribute : fonctionne pour la grande
-            // majorité des apps AppKit, mais certaines fenêtres (panneaux
-            // système, certaines apps non standard) peuvent l'ignorer
-            // silencieusement — l'API ne donne aucun moyen fiable de le
-            // détecter à l'avance.
-            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
-
-        case .pinch(direction: .in_, fingers: _):
-            let width = screenFrame.width * pinchInScale
-            let height = screenFrame.height * pinchInScale
-            animatedMoveAndResize(
-                window: window,
-                x: (screenFrame.width - width) / 2,
-                y: (screenFrame.height - height) / 2,
-                width: width,
-                height: height
-            )
-
-        case .tap:
-            break
+        case let .swipe(direction, _): action = GestureSequence.resolve(swipes: [direction])
+        case let .pinch(direction, _): action = GestureSequence.resolve(pinches: [direction])
+        case .tap: action = nil
         }
+
+        guard let action, let window = getFrontmostWindow() else { return }
+        perform(action, on: window)
     }
 }

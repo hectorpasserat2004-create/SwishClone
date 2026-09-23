@@ -35,6 +35,9 @@ enum GlobalGestureMonitor {
     private static var scrollSessionActive = false
     private static var sumDeltaX: Double = 0
     private static var sumDeltaY: Double = 0
+    /// La fenêtre visée, décidée au début du geste. `nil` : le geste n'est
+    /// pas pour nous (hors barre de titre, contenu défilant…).
+    private static var sessionTarget: GestureTarget.Target?
 
     private static var magnifyMonitor: Any?
     private static var swipeMonitor: Any?
@@ -72,6 +75,7 @@ enum GlobalGestureMonitor {
         scrollSessionActive = false
         sumDeltaX = 0
         sumDeltaY = 0
+        sessionTarget = nil
     }
 
     /// Session par phase, même principe que la fenêtre de fin de session
@@ -90,6 +94,7 @@ enum GlobalGestureMonitor {
             scrollSessionActive = true
             sumDeltaX = 0
             sumDeltaY = 0
+            sessionTarget = GestureTarget.underCursor()
         }
 
         guard scrollSessionActive else { return }
@@ -108,9 +113,11 @@ enum GlobalGestureMonitor {
     private static func finishScrollSession() {
         let dx = sumDeltaX
         let dy = sumDeltaY
+        let target = sessionTarget
         scrollSessionActive = false
         sumDeltaX = 0
         sumDeltaY = 0
+        sessionTarget = nil
 
         guard max(abs(dx), abs(dy)) >= swipeThreshold else {
             print("[GlobalGestureMonitor] swipe ignoré : sumDeltaX=\(dx) sumDeltaY=\(dy) "
@@ -134,15 +141,14 @@ enum GlobalGestureMonitor {
         print("[GlobalGestureMonitor] fin de session swipe : sumDeltaX=\(dx) sumDeltaY=\(dy) "
             + "-> retenu, \(gesture)")
 
-        // Le diagnostic ci-dessus s'affiche toujours, où que soit le
-        // curseur — seule l'action finale sur la fenêtre est conditionnée
-        // à la zone (mode "Menubar" façon Swish), même principe que le
-        // pinch dans EventTapGestureMonitor.
-        guard GestureZone.isCursorInActiveWindowTitlebar() else {
-            print("[GlobalGestureMonitor] swipe ignoré : curseur hors zone")
+        // Le diagnostic ci-dessus s'affiche toujours ; seule l'action est
+        // conditionnée à la cible, décidée au début du geste.
+        guard let target else {
+            print("[GlobalGestureMonitor] swipe ignoré : pas de barre de titre sous le curseur au début du geste")
             return
         }
 
-        WindowController.handleGesture(gesture)
+        guard let action = GestureSequence.resolve(swipes: [direction]) else { return }
+        WindowController.perform(action, on: target.window)
     }
 }
