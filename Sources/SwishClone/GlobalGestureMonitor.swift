@@ -136,7 +136,7 @@ enum GlobalGestureMonitor {
         // curseur — seule l'action finale sur la fenêtre est conditionnée
         // à la zone (mode "Menubar" façon Swish), même principe que le
         // pinch dans EventTapGestureMonitor.
-        guard GestureZone.isCursorInTopBand() else {
+        guard GestureZone.isCursorInActiveWindowTitlebar() else {
             print("[GlobalGestureMonitor] swipe ignoré : curseur hors zone")
             return
         }

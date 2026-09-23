@@ -221,7 +221,7 @@ enum EventTapGestureMonitor {
         // Le diagnostic ci-dessus s'affiche toujours, où que soit le
         // curseur — seule l'action finale sur la fenêtre est conditionnée
         // à la zone (mode "Menubar" façon Swish).
-        guard GestureZone.isCursorInTopBand() else {
+        guard GestureZone.isCursorInActiveWindowTitlebar() else {
             print("[EventTapGestureMonitor] pinch ignoré : curseur hors zone")
             return
         }

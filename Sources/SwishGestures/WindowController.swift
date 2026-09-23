@@ -90,6 +90,70 @@ public enum WindowController {
         return positionResult == .success && sizeResult == .success
     }
 
+    // MARK: - Déplacement/redimensionnement animé
+
+    private static var animationTimer: Timer?
+
+    /// Intervalle entre deux étapes (~75 fps). L'interpolation se base sur
+    /// le temps écoulé réel et non sur un nombre d'étapes fixe : chaque
+    /// écriture AX est un appel synchrone vers l'app cible, dont la durée
+    /// varie, donc un compte d'étapes ferait dériver la durée totale.
+    private static let animationTickInterval: TimeInterval = 0.013
+
+    /// Comme `moveAndResize`, mais interpolé en ease-out sur `duration`
+    /// secondes (l'Accessibility API n'a pas d'animation native : on
+    /// simule en écrivant position/taille à intervalles rapprochés).
+    ///
+    /// Une animation déjà en cours est annulée avant d'en démarrer une
+    /// nouvelle, qui part de la position RÉELLE actuelle de la fenêtre
+    /// (relue ici), pas du point de départ de l'ancienne. Un seul timer
+    /// existe à la fois : les gestes n'agissent que sur la fenêtre au
+    /// premier plan, donc il n'y a jamais deux fenêtres à animer.
+    public static func animatedMoveAndResize(
+        window: AXUIElement,
+        x: CGFloat,
+        y: CGFloat,
+        width: CGFloat,
+        height: CGFloat,
+        duration: TimeInterval = 0.2
+    ) {
+        animationTimer?.invalidate()
+        animationTimer = nil
+
+        guard let startPosition = position(of: window), let startSize = size(of: window) else {
+            // Impossible de lire l'état de départ : pas d'interpolation
+            // possible, on applique directement.
+            moveAndResize(window: window, x: x, y: y, width: width, height: height)
+            return
+        }
+
+        let startTime = Date()
+        let timer = Timer(timeInterval: animationTickInterval, repeats: true) { timer in
+            let t = min(1, Date().timeIntervalSince(startTime) / duration)
+
+            if t >= 1 {
+                // Dernière étape : valeurs exactes de la cible, sans
+                // erreur d'arrondi cumulée.
+                moveAndResize(window: window, x: x, y: y, width: width, height: height)
+                timer.invalidate()
+                if animationTimer === timer { animationTimer = nil }
+                return
+            }
+
+            // ease-out cubique : grands pas au début, petits à la fin.
+            let eased = CGFloat(1 - pow(1 - t, 3))
+            moveAndResize(
+                window: window,
+                x: startPosition.x + (x - startPosition.x) * eased,
+                y: startPosition.y + (y - startPosition.y) * eased,
+                width: startSize.width + (width - startSize.width) * eased,
+                height: startSize.height + (height - startSize.height) * eased
+            )
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animationTimer = timer
+    }
+
     // MARK: - Plein écran natif
 
     /// Attribut Accessibility non documenté officiellement par Apple,
@@ -176,7 +240,7 @@ public enum WindowController {
 
         switch gesture {
         case .swipe(direction: .left, fingers: _):
-            moveAndResize(
+            animatedMoveAndResize(
                 window: window,
                 x: 0,
                 y: 0,
@@ -185,7 +249,7 @@ public enum WindowController {
             )
 
         case .swipe(direction: .right, fingers: _):
-            moveAndResize(
+            animatedMoveAndResize(
                 window: window,
                 x: screenFrame.width / 2,
                 y: 0,
@@ -197,7 +261,7 @@ public enum WindowController {
             // Plein écran "classique" : redimensionne pour remplir
             // l'écran, reste sur le même bureau/Space. Différent de
             // pinch out, qui bascule le vrai plein écran natif macOS.
-            moveAndResize(
+            animatedMoveAndResize(
                 window: window,
                 x: 0,
                 y: 0,
@@ -219,7 +283,7 @@ public enum WindowController {
         case .pinch(direction: .in_, fingers: _):
             let width = screenFrame.width * pinchInScale
             let height = screenFrame.height * pinchInScale
-            moveAndResize(
+            animatedMoveAndResize(
                 window: window,
                 x: (screenFrame.width - width) / 2,
                 y: (screenFrame.height - height) / 2,

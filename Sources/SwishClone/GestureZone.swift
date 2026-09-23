@@ -1,29 +1,48 @@
 import AppKit
+import SwishGestures
 
-/// Restreint le déclenchement d'une action de geste à une fine bande en
-/// haut de l'écran (mode "Menubar" façon Swish) : un geste reste toujours
-/// détecté et loggé où que soit le curseur, mais ne doit produire
-/// d'action sur une fenêtre que si le curseur est dans cette bande au
-/// moment où le geste se termine.
+/// Restreint le déclenchement d'une action de geste à la barre de titre de
+/// la fenêtre active (mode "Windows" façon Swish) : un geste reste
+/// toujours détecté et loggé où que soit le curseur, mais ne doit produire
+/// d'action que si le curseur est sur la barre de titre de la fenêtre au
+/// premier plan au moment où le geste se termine. Aucune fenêtre overlay
+/// n'est nécessaire — c'est un simple test géométrique.
 enum GestureZone {
 
-    /// `true` si le curseur est actuellement dans les `height` premiers
-    /// pixels en haut de l'écran qui le contient.
+    /// `true` si le curseur est dans la largeur de la fenêtre active et
+    /// dans les `height` premiers pixels en partant du haut de CETTE
+    /// fenêtre. `false` si aucune fenêtre valide n'est trouvée, ou si la
+    /// fenêtre active est la nôtre.
     ///
-    /// `NSEvent.mouseLocation` est en coordonnées AppKit (origine en bas à
-    /// gauche de l'écran, y croissant vers le haut) — "en haut de l'écran"
-    /// correspond donc à un y PROCHE DU MAXIMUM de la hauteur de cet
-    /// écran, pas proche de 0.
-    ///
-    /// `NSScreen.screens` (pas seulement `.main`) pour gérer plusieurs
-    /// moniteurs : chaque `frame` est déjà exprimé dans le même espace de
-    /// coordonnées global, donc `frame.maxY` donne le bord haut du bon
-    /// écran même s'il n'est pas positionné à l'origine.
-    static func isCursorInTopBand(height: CGFloat = 40) -> Bool {
-        let location = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(location) }) else {
+    /// Conversion de coordonnées : l'Accessibility API (position AX) a son
+    /// origine en HAUT à gauche de l'écran principal, y croissant vers le
+    /// bas ; `NSEvent.mouseLocation` est en coordonnées Cocoa (origine en
+    /// BAS à gauche, y croissant vers le haut). Même formule que celle
+    /// validée dans `TitlebarTrackingPanel` :
+    /// `cocoaY = hauteurÉcran - axY`. La hauteur de référence est celle de
+    /// l'écran PRIMAIRE (`NSScreen.screens.first`, celui qui porte la barre
+    /// de menus, ancre de l'espace AX) et non `NSScreen.main`, qui désigne
+    /// l'écran de la fenêtre clé et peut différer en multi-moniteurs.
+    static func isCursorInActiveWindowTitlebar(height: CGFloat = 40) -> Bool {
+        // `getFrontmostWindow()` n'exclut pas notre propre app (seul
+        // `handleGesture` le fait) : on l'exclut ici explicitement.
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        guard frontmostApp?.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
             return false
         }
-        return (screen.frame.maxY - location.y) <= height
+
+        guard let window = WindowController.getFrontmostWindow(),
+              let position = WindowController.position(of: window),
+              let size = WindowController.size(of: window),
+              let primaryScreenHeight = NSScreen.screens.first?.frame.height else {
+            return false
+        }
+
+        let cocoaTop = primaryScreenHeight - position.y
+        let cursor = NSEvent.mouseLocation
+
+        let isWithinWidth = cursor.x >= position.x && cursor.x <= position.x + size.width
+        let isWithinTitlebarBand = cursor.y <= cocoaTop && cursor.y >= cocoaTop - height
+        return isWithinWidth && isWithinTitlebarBand
     }
 }
