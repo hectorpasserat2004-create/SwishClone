@@ -1,4 +1,4 @@
-public enum PinchDirection: Equatable {
+public enum PinchDirection: Equatable, Sendable {
     case in_
     case out
 }
