@@ -24,8 +24,9 @@ import SwishGestures
 enum GlobalGestureMonitor {
 
     /// Somme cumulée en dessous de laquelle un swipe est ignoré (scroll
-    /// involontaire). À calibrer comme `EventTapGestureMonitor.pinchThreshold`.
-    private static let swipeThreshold: Double = 20
+    /// involontaire) : réglage `GestureSettings.swipeThreshold`, relu à
+    /// chaque geste.
+    private static var swipeThreshold: Double { GestureSettings.shared.swipeThreshold }
 
     private static var scrollSessionActive = false
     private static var sumDeltaX: Double = 0
@@ -84,6 +85,12 @@ enum GlobalGestureMonitor {
     /// la fin du momentum, pas sur .ended de la phase tactile) classe le
     /// geste sur le déplacement cumulé total.
     private static func handleScrollEvent(_ event: NSEvent) {
+        // Swipe désactivé : on ignore avant même d'accumuler/classifier.
+        guard GestureSettings.shared.swipeEnabled else {
+            scrollSessionActive = false
+            return
+        }
+
         if event.phase.contains(.began) {
             scrollSessionActive = true
             sumDeltaX = 0

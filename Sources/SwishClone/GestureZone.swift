@@ -23,7 +23,7 @@ enum GestureZone {
     /// l'écran PRIMAIRE (`NSScreen.screens.first`, celui qui porte la barre
     /// de menus, ancre de l'espace AX) et non `NSScreen.main`, qui désigne
     /// l'écran de la fenêtre clé et peut différer en multi-moniteurs.
-    static func isCursorInActiveWindowTitlebar(height: CGFloat = 40) -> Bool {
+    static func isCursorInActiveWindowTitlebar(height: CGFloat = CGFloat(GestureSettings.shared.gestureZoneHeight)) -> Bool {
         // `getFrontmostWindow()` n'exclut pas notre propre app (seul
         // `handleGesture` le fait) : on l'exclut ici explicitement.
         let frontmostApp = NSWorkspace.shared.frontmostApplication

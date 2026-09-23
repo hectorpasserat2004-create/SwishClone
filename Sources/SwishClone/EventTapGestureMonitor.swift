@@ -54,8 +54,9 @@ enum EventTapGestureMonitor {
     private static let magnitudeFieldRawValue: UInt32 = 113
 
     /// En dessous de cette magnitude cumulative absolue, le pinch est
-    /// ignoré (mouvement trop faible pour être volontaire). À calibrer.
-    private static let pinchThreshold: Float = 0.1
+    /// ignoré (mouvement trop faible pour être volontaire) : réglage
+    /// `GestureSettings.pinchThreshold`, relu à chaque geste.
+    private static var pinchThreshold: Float { Float(GestureSettings.shared.pinchThreshold) }
 
     /// Silence après le dernier event magnify au-delà duquel on considère
     /// que les doigts ont levé et que le pinch est terminé — il n'y a pas
@@ -152,6 +153,9 @@ enum EventTapGestureMonitor {
     /// Appelé pour chaque event de type 29. Ignore tout ce qui n'est pas
     /// un magnify (le swipe reste couvert par GlobalGestureMonitor).
     fileprivate static func handleGestureEvent(_ event: CGEvent) {
+        // Pinch désactivé : on ignore avant même de lire/classifier.
+        guard GestureSettings.shared.pinchEnabled else { return }
+
         let subtypeField = unsafeBitCast(subtypeFieldRawValue, to: CGEventField.self)
         guard event.getIntegerValueField(subtypeField) == magnifySubtype else { return }
 

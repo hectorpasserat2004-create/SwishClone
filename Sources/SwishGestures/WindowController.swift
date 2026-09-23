@@ -115,7 +115,7 @@ public enum WindowController {
         y: CGFloat,
         width: CGFloat,
         height: CGFloat,
-        duration: TimeInterval = 0.2
+        duration: TimeInterval = GestureSettings.shared.animationDuration
     ) {
         animationTimer?.invalidate()
         animationTimer = nil

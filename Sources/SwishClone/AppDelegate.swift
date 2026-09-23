@@ -1,10 +1,12 @@
 import Cocoa
+import SwiftUI
 import SwishCloneCore
 import SwishGestures
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     var window: NSWindow!
+    private var preferencesWindow: NSWindow?
     private var statusItem: NSStatusItem!
     private var toggleWindowItem: NSMenuItem!
 
@@ -62,6 +64,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         toggleWindowItem.target = self
 
+        let preferencesItem = menu.addItem(
+            withTitle: "Préférences…",
+            action: #selector(showPreferences),
+            keyEquivalent: ","
+        )
+        preferencesItem.target = self
+
         menu.addItem(.separator())
 
         let snapLeftItem = menu.addItem(
@@ -96,6 +105,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    @objc private func showPreferences() {
+        if preferencesWindow == nil {
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
+            window.title = "Préférences SwishClone"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(NSSize(width: 500, height: 400))
+            window.center()
+            window.isReleasedWhenClosed = false
+            preferencesWindow = window
+        }
+        preferencesWindow?.makeKeyAndOrderFront(nil)
+        // App `.accessory` : sans activation, la fenêtre s'ouvre sans
+        // devenir key (champs et sliders inertes jusqu'au premier clic).
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func quit() {
