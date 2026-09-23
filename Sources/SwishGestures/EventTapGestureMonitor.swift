@@ -1,7 +1,6 @@
 import Cocoa
 import CoreGraphics
 import SwishCloneCore
-import SwishGestures
 
 /// Prototype isolé (comme GlobalGestureMonitor.swift et
 /// TitlebarTrackingPanel.swift) — ne touche à rien du pipeline existant
@@ -35,6 +34,12 @@ import SwishGestures
 /// Le swipe n'est PAS redécodé ici : `GlobalGestureMonitor` (scrollWheel,
 /// via `NSEvent`) le couvre déjà de façon fiable, pas besoin d'une
 /// deuxième source pour la même chose.
+///
+/// `@MainActor` : la source du tap est ajoutée à la run loop du thread
+/// qui appelle `start()` — le principal, via `GestureMonitor` — et le
+/// timer de fin de session y tourne aussi. Démarré uniquement par
+/// `GestureMonitor`.
+@MainActor
 enum EventTapGestureMonitor {
 
     /// rawValue non documenté du type d'event "gesture".
@@ -42,7 +47,7 @@ enum EventTapGestureMonitor {
     /// `fileprivate`, pas `private` : accédé depuis `eventTapCallback`,
     /// une fonction top-level du même fichier (voir plus bas pourquoi ce
     /// callback ne peut pas être une closure littérale).
-    fileprivate static let gestureEventTypeRawValue: UInt32 = 29
+    nonisolated fileprivate static let gestureEventTypeRawValue: UInt32 = 29
 
     /// Champ qui discrimine magnify (8) de swipe/pan (6) sur un event de
     /// type 29.
@@ -78,15 +83,10 @@ enum EventTapGestureMonitor {
     private static var eventTap: CFMachPort?
     private static var runLoopSource: CFRunLoopSource?
 
-    static func start() {
-        guard WindowController.isAccessibilityTrusted() else {
-            print("[EventTapGestureMonitor] permission Accessibility manquante — "
-                + "CGEventTapCreate échouerait silencieusement sans elle. "
-                + "Demande de la permission…")
-            WindowController.requestAccessibilityPermission()
-            return
-        }
-
+    /// `false` si le tap n'a pas pu être créé. La permission Accessibility
+    /// est vérifiée en amont par `GestureMonitor.start()` :
+    /// CGEventTapCreate échouerait silencieusement sans elle.
+    static func start() -> Bool {
         let eventsOfInterest = CGEventMask(1) << CGEventMask(gestureEventTypeRawValue)
 
         guard let tap = CGEvent.tapCreate(
@@ -114,7 +114,7 @@ enum EventTapGestureMonitor {
                  local, mais à garder en tête si les deux permissions ci-dessus \
                  sont accordées et que ça échoue quand même.
             """)
-            return
+            return false
         }
 
         eventTap = tap
@@ -123,7 +123,7 @@ enum EventTapGestureMonitor {
             print("[EventTapGestureMonitor] ⚠️ le tap s'est créé mais "
                 + "CFMachPortCreateRunLoopSource a échoué — abandon.")
             eventTap = nil
-            return
+            return false
         }
 
         runLoopSource = source
@@ -132,6 +132,7 @@ enum EventTapGestureMonitor {
 
         print("[EventTapGestureMonitor] tap démarré — pinch global actif "
             + "(seuil \(pinchThreshold), fenêtre de fin de session \(Int(pinchSessionGap * 1000))ms)")
+        return true
     }
 
     static func stop() {
@@ -194,7 +195,9 @@ enum EventTapGestureMonitor {
 
         pinchSessionTimer?.invalidate()
         pinchSessionTimer = Timer.scheduledTimer(withTimeInterval: pinchSessionGap, repeats: false) { _ in
-            finishPinchSession()
+            // Timer planifié sur la run loop principale : le bloc y
+            // tourne, mais son type ne le dit pas au compilateur.
+            MainActor.assumeIsolated { finishPinchSession() }
         }
     }
 
@@ -247,7 +250,9 @@ private func eventTapCallback(
     refcon: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
     if type.rawValue == EventTapGestureMonitor.gestureEventTypeRawValue {
-        EventTapGestureMonitor.handleGestureEvent(event)
+        // La source du tap est sur la run loop principale (voir
+        // `start()`) : ce callback C y est donc toujours appelé.
+        MainActor.assumeIsolated { EventTapGestureMonitor.handleGestureEvent(event) }
     }
     // .listenOnly : on ne modifie jamais l'event, on le laisse continuer
     // son chemin inchangé.

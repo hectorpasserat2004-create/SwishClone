@@ -1,6 +1,5 @@
 import Cocoa
 import SwishCloneCore
-import SwishGestures
 
 /// Capture le swipe globalement, via `NSEvent.addGlobalMonitorForEvents`
 /// sur `.scrollWheel` — le signal déjà validé comme fiable pour un swipe
@@ -21,6 +20,11 @@ import SwishGestures
 /// `deltaY > 0` = swipe vers le BAS — l'axe Y va donc dans le sens
 /// opposé à celui de `GestureClassifier` (touches directes), corrigé
 /// après un test réel qui montrait les deux inversés.
+///
+/// `@MainActor` : les handlers de `addGlobalMonitorForEvents` sont
+/// appelés sur le thread principal, et l'état de session ci-dessous
+/// n'est protégé par rien d'autre. Démarré uniquement par `GestureMonitor`.
+@MainActor
 enum GlobalGestureMonitor {
 
     /// Somme cumulée en dessous de laquelle un swipe est ignoré (scroll
@@ -36,19 +40,10 @@ enum GlobalGestureMonitor {
     private static var swipeMonitor: Any?
     private static var scrollMonitor: Any?
 
+    /// Sans la permission Accessibility, addGlobalMonitorForEvents ne
+    /// reçoit rien, sans erreur ni log — silencieusement. C'est
+    /// `GestureMonitor.start()` qui la vérifie avant d'appeler ceci.
     static func start() {
-        // Hypothèse à vérifier : sans la permission Accessibility,
-        // addGlobalMonitorForEvents ne reçoit rien, sans erreur ni log —
-        // silencieusement. On vérifie donc avant de démarrer, plutôt que
-        // de se demander pourquoi la console reste vide.
-        guard WindowController.isAccessibilityTrusted() else {
-            print("[GlobalGestureMonitor] permission Accessibility manquante — "
-                + "les monitors globaux ne recevraient probablement rien. "
-                + "Demande de la permission…")
-            WindowController.requestAccessibilityPermission()
-            return
-        }
-
         magnifyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .magnify) { event in
             print("[GlobalGestureMonitor] .magnify magnitude=\(event.magnification)")
         }

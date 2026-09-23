@@ -10,6 +10,11 @@ import Foundation
 ///
 /// `ObservableObject` plutôt que `@Observable` : ce dernier demande
 /// macOS 14, le package cible macOS 13.
+///
+/// `@MainActor` : lu par les moniteurs (thread principal) et écrit par
+/// l'interface SwiftUI. Un consommateur en Swift 6 (bran) l'utilise
+/// ainsi sans `@preconcurrency`.
+@MainActor
 public final class GestureSettings: ObservableObject {
 
     public static let shared = GestureSettings()

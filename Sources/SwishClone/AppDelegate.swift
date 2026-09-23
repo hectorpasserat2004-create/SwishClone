@@ -3,6 +3,7 @@ import SwiftUI
 import SwishCloneCore
 import SwishGestures
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     var window: NSWindow!
@@ -32,19 +33,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         setUpStatusItem()
 
-        // Prototype isolé (voir GlobalGestureMonitor.swift) : ne remplace
-        // rien de l'existant, tourne en parallèle pour tester si les
-        // gestes sont captables globalement, sans activer notre fenêtre.
-        GlobalGestureMonitor.start()
-
         // TitlebarTrackingPanel n'est plus démarré : approche obsolète
         // depuis EventTapGestureMonitor (CGEventTap), qui n'affiche aucune
         // fenêtre et ne peut donc bloquer aucun bouton. Fichier gardé
         // dans le repo pour référence.
 
-        // Prototype isolé (voir EventTapGestureMonitor.swift) : capture
-        // des gestes via CGEventTap, sans passer par aucune NSView/NSWindow.
-        EventTapGestureMonitor.start()
+        // Détection globale (swipe + pinch), sans activer notre fenêtre.
+        // Vit dans SwishGestures pour être réutilisée par d'autres apps.
+        do {
+            try GestureMonitor.start()
+        } catch GestureMonitor.StartError.accessibilityNotTrusted {
+            print("[AppDelegate] permission Accessibility manquante — "
+                + "détection globale non démarrée. Demande de la permission…")
+            WindowController.requestAccessibilityPermission()
+        } catch {
+            print("[AppDelegate] détection globale non démarrée : \(error)")
+        }
     }
 
     private func setUpStatusItem() {

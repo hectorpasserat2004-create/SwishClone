@@ -1,5 +1,4 @@
 import AppKit
-import SwishGestures
 
 /// Restreint le déclenchement d'une action de geste à la barre de titre de
 /// la fenêtre active (mode "Windows" façon Swish) : un geste reste
@@ -7,6 +6,7 @@ import SwishGestures
 /// d'action que si le curseur est sur la barre de titre de la fenêtre au
 /// premier plan au moment où le geste se termine. Aucune fenêtre overlay
 /// n'est nécessaire — c'est un simple test géométrique.
+@MainActor
 enum GestureZone {
 
     /// `true` si le curseur est dans la largeur de la fenêtre active et
@@ -23,7 +23,12 @@ enum GestureZone {
     /// l'écran PRIMAIRE (`NSScreen.screens.first`, celui qui porte la barre
     /// de menus, ancre de l'espace AX) et non `NSScreen.main`, qui désigne
     /// l'écran de la fenêtre clé et peut différer en multi-moniteurs.
-    static func isCursorInActiveWindowTitlebar(height: CGFloat = CGFloat(GestureSettings.shared.gestureZoneHeight)) -> Bool {
+    ///
+    /// `height` optionnel plutôt qu'un défaut lu dans `GestureSettings` :
+    /// un argument par défaut est évalué hors de l'acteur principal.
+    static func isCursorInActiveWindowTitlebar(height: CGFloat? = nil) -> Bool {
+        let height = height ?? CGFloat(GestureSettings.shared.gestureZoneHeight)
+
         // `getFrontmostWindow()` n'exclut pas notre propre app (seul
         // `handleGesture` le fait) : on l'exclut ici explicitement.
         let frontmostApp = NSWorkspace.shared.frontmostApplication

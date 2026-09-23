@@ -9,6 +9,7 @@ import SwishGestures
 /// Contient notre `TouchGestureView` existante telle quelle comme
 /// contentView : la détection de gestes elle-même n'est pas modifiée,
 /// seule la POSITION de la zone qui les capte devient dynamique.
+@MainActor
 enum TitlebarTrackingPanel {
 
     /// Hauteur de la bande suivie, en haut de la fenêtre active — la zone
@@ -52,7 +53,7 @@ enum TitlebarTrackingPanel {
 
         trackingTimer?.invalidate()
         trackingTimer = Timer.scheduledTimer(withTimeInterval: trackingInterval, repeats: true) { _ in
-            tick()
+            MainActor.assumeIsolated { tick() }
         }
 
         print("[TitlebarTrackingPanel] tracking démarré (intervalle \(Int(trackingInterval * 1000))ms)")

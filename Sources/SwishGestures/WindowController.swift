@@ -1,22 +1,30 @@
 import AppKit
-import ApplicationServices
+// `AXUIElement` n'est pas annoté `Sendable` par Apple ; il est capturé
+// par le timer d'animation, qui ne quitte jamais le thread principal.
+@preconcurrency import ApplicationServices
 import SwishCloneCore
 
 /// Contrôle de fenêtres externes via l'Accessibility API (AXUIElement),
 /// et mapping des gestes détectés vers des actions sur la fenêtre au
 /// premier plan.
+///
+/// `@MainActor` : le timer d'animation et le cooldown sont un état
+/// partagé sans verrou, et tout ce qui appelle ce type (moniteurs,
+/// `TouchGestureView`, interface) est déjà sur le thread principal. Seules
+/// les deux fonctions de permission, sans état, restent `nonisolated`.
+@MainActor
 public enum WindowController {
 
     // MARK: - Permission Accessibility
 
-    public static func isAccessibilityTrusted() -> Bool {
+    nonisolated public static func isAccessibilityTrusted() -> Bool {
         AXIsProcessTrusted()
     }
 
     /// Déclenche le prompt système qui envoie l'utilisateur vers
     /// Réglages Système > Confidentialité et sécurité > Accessibilité.
     @discardableResult
-    public static func requestAccessibilityPermission() -> Bool {
+    nonisolated public static func requestAccessibilityPermission() -> Bool {
         let options: [String: Any] = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         return AXIsProcessTrustedWithOptions(options as CFDictionary)
     }
@@ -115,8 +123,12 @@ public enum WindowController {
         y: CGFloat,
         width: CGFloat,
         height: CGFloat,
-        duration: TimeInterval = GestureSettings.shared.animationDuration
+        duration: TimeInterval? = nil
     ) {
+        // Défaut lu ici et non dans la signature : un argument par défaut
+        // est évalué hors de l'acteur principal.
+        let duration = duration ?? GestureSettings.shared.animationDuration
+
         animationTimer?.invalidate()
         animationTimer = nil
 
@@ -129,26 +141,30 @@ public enum WindowController {
 
         let startTime = Date()
         let timer = Timer(timeInterval: animationTickInterval, repeats: true) { timer in
-            let t = min(1, Date().timeIntervalSince(startTime) / duration)
+            // Timer ajouté à `RunLoop.main` ci-dessous : le bloc y tourne,
+            // mais son type (`@Sendable`) ne le dit pas au compilateur.
+            MainActor.assumeIsolated {
+                let t = min(1, Date().timeIntervalSince(startTime) / duration)
 
-            if t >= 1 {
-                // Dernière étape : valeurs exactes de la cible, sans
-                // erreur d'arrondi cumulée.
-                moveAndResize(window: window, x: x, y: y, width: width, height: height)
-                timer.invalidate()
-                if animationTimer === timer { animationTimer = nil }
-                return
+                if t >= 1 {
+                    // Dernière étape : valeurs exactes de la cible, sans
+                    // erreur d'arrondi cumulée.
+                    moveAndResize(window: window, x: x, y: y, width: width, height: height)
+                    timer.invalidate()
+                    if animationTimer === timer { animationTimer = nil }
+                    return
+                }
+
+                // ease-out cubique : grands pas au début, petits à la fin.
+                let eased = CGFloat(1 - pow(1 - t, 3))
+                moveAndResize(
+                    window: window,
+                    x: startPosition.x + (x - startPosition.x) * eased,
+                    y: startPosition.y + (y - startPosition.y) * eased,
+                    width: startSize.width + (width - startSize.width) * eased,
+                    height: startSize.height + (height - startSize.height) * eased
+                )
             }
-
-            // ease-out cubique : grands pas au début, petits à la fin.
-            let eased = CGFloat(1 - pow(1 - t, 3))
-            moveAndResize(
-                window: window,
-                x: startPosition.x + (x - startPosition.x) * eased,
-                y: startPosition.y + (y - startPosition.y) * eased,
-                width: startSize.width + (width - startSize.width) * eased,
-                height: startSize.height + (height - startSize.height) * eased
-            )
         }
         RunLoop.main.add(timer, forMode: .common)
         animationTimer = timer
