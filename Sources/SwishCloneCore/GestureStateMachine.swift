@@ -89,12 +89,20 @@ public struct GestureStateMachine: Sendable {
         case step, cancel
     }
 
+    public enum CancelReason: Equatable, Sendable {
+        /// Immobile au-delà de `cancelTimeout`.
+        case stillness
+        case escape
+        /// Le système a interrompu le geste (phase `cancelled`).
+        case interrupted
+    }
+
     public enum Effect: Equatable, Sendable {
         case showPreview(Preview)
         case hidePreview
         case haptic(Haptic)
         case commit(WindowAction)
-        case cancelled
+        case cancelled(CancelReason)
     }
 
     public struct Output: Equatable, Sendable {
@@ -194,6 +202,26 @@ public struct GestureStateMachine: Sendable {
         show(nil, effects: &effects)
         state = .idle
         return effects
+    }
+
+    /// Diagnostic : l'état du geste en cours, lisible, à l'instant `now`.
+    /// `nil` hors d'un geste suivi.
+    public func debugSummary(at now: TimeInterval) -> String? {
+        func seconds(_ value: TimeInterval) -> String { String(format: "%.2fs", value) }
+        switch state {
+        case let .swipe(t):
+            let still = now - t.lastMovementAt
+            return "swipe étapes=\(t.steps) candidate=\(t.candidate.map { "\($0)" } ?? "aucune") "
+                + String(format: "acc=(%.1f, %.1f) ", t.accX, t.accY)
+                + "immobile depuis \(seconds(still)), annulation dans \(seconds(configuration.cancelTimeout - still))"
+        case let .pinch(p):
+            let still = now - p.lastMovementAt
+            return "pincement étapes=\(p.steps) candidate=\(p.candidate.map { "\($0)" } ?? "aucune") "
+                + String(format: "pic=%.3f ", p.stepPeak)
+                + "immobile depuis \(seconds(still)), annulation dans \(seconds(configuration.cancelTimeout - still))"
+        default:
+            return nil
+        }
     }
 
     // MARK: - Entrée
@@ -300,7 +328,7 @@ public struct GestureStateMachine: Sendable {
             // d'inertie à attendre.
             switch state {
             case let .swipe(t):
-                abandon(pending: t.steps.isEmpty == false || t.candidate != nil, effects: &effects)
+                abandon(pending: t.steps.isEmpty == false || t.candidate != nil, reason: .interrupted, effects: &effects)
                 state = .idle
                 return true
             case .swipeCancelled:
@@ -362,7 +390,7 @@ public struct GestureStateMachine: Sendable {
                 if phase == .ended {
                     finishPinch(p, effects: &effects)
                 } else {
-                    abandon(pending: p.steps.isEmpty == false || p.candidate != nil, effects: &effects)
+                    abandon(pending: p.steps.isEmpty == false || p.candidate != nil, reason: .interrupted, effects: &effects)
                     state = .idle
                 }
                 return true
@@ -440,11 +468,11 @@ public struct GestureStateMachine: Sendable {
     private mutating func handleEscape(effects: inout [Effect]) -> Bool {
         switch state {
         case let .swipe(t):
-            abandon(pending: t.steps.isEmpty == false || t.candidate != nil, effects: &effects)
+            abandon(pending: t.steps.isEmpty == false || t.candidate != nil, reason: .escape, effects: &effects)
             state = .swipeCancelled
             return true
         case let .pinch(p):
-            abandon(pending: p.steps.isEmpty == false || p.candidate != nil, effects: &effects)
+            abandon(pending: p.steps.isEmpty == false || p.candidate != nil, reason: .escape, effects: &effects)
             state = .pinchCancelled(lastEventAt: p.lastEventAt, usesPhase: p.usesPhase)
             return true
         default:
@@ -457,7 +485,7 @@ public struct GestureStateMachine: Sendable {
         case var .swipe(t):
             let still = now - t.lastMovementAt
             if still >= configuration.cancelTimeout {
-                abandon(pending: t.steps.isEmpty == false || t.candidate != nil, effects: &effects)
+                abandon(pending: t.steps.isEmpty == false || t.candidate != nil, reason: .stillness, effects: &effects)
                 state = .swipeCancelled
             } else if let candidate = t.candidate, still >= configuration.stepPause {
                 t.steps.append(candidate)
@@ -478,7 +506,7 @@ public struct GestureStateMachine: Sendable {
             }
             let still = now - p.lastMovementAt
             if still >= configuration.cancelTimeout {
-                abandon(pending: p.steps.isEmpty == false || p.candidate != nil, effects: &effects)
+                abandon(pending: p.steps.isEmpty == false || p.candidate != nil, reason: .stillness, effects: &effects)
                 state = .pinchCancelled(lastEventAt: p.lastEventAt, usesPhase: p.usesPhase)
             } else if let candidate = p.candidate, still >= configuration.stepPause {
                 p.steps.append(candidate)
@@ -503,11 +531,11 @@ public struct GestureStateMachine: Sendable {
     /// Annule sans agir. Le retour haptique et `.cancelled` ne partent que
     /// s'il y avait quelque chose à annuler : poser deux doigts sur une barre
     /// de titre et les relever n'a rien d'un geste raté.
-    private mutating func abandon(pending: Bool, effects: inout [Effect]) {
+    private mutating func abandon(pending: Bool, reason: CancelReason, effects: inout [Effect]) {
         show(nil, effects: &effects)
         guard pending else { return }
         effects.append(.haptic(.cancel))
-        effects.append(.cancelled)
+        effects.append(.cancelled(reason))
     }
 
     /// N'émet que les changements : l'aperçu n'est redessiné que quand ce

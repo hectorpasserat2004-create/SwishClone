@@ -216,7 +216,7 @@ final class GestureStateMachineTests: XCTestCase {
         driver.move(dx: -40)
         driver.wait(0.9)
 
-        XCTAssertTrue(driver.effects.contains(.cancelled))
+        XCTAssertTrue(driver.effects.contains(.cancelled(.stillness)))
         XCTAssertEqual(driver.previews.last, .some(nil))
 
         driver.move(dx: 40)
@@ -243,7 +243,46 @@ final class GestureStateMachineTests: XCTestCase {
         XCTAssertEqual(driver.send(.escape), .swallow, "Échap ne doit pas atteindre l'app pendant un geste")
         driver.scroll(.ended)
         XCTAssertEqual(driver.commits, [])
-        XCTAssertTrue(driver.effects.contains(.cancelled))
+        XCTAssertTrue(driver.effects.contains(.cancelled(.escape)))
+    }
+
+    func testSystemInterruptionIsReportedAsSuch() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dx: 40)
+        driver.scroll(.cancelled)
+        XCTAssertTrue(driver.effects.contains(.cancelled(.interrupted)))
+    }
+
+    // MARK: - Point 1 du test manuel : ce que la machine fait aujourd'hui
+    //
+    // Ces deux tests décrivent le comportement actuel, pour le diagnostic —
+    // ils ne disent pas que c'est le bon.
+
+    func testStillnessIsCountedFromTheLastMovementNotFromTheGestureStart() {
+        // Un long premier mouvement (1 s) ne consomme pas le délai : c'est
+        // l'immobilité qui compte.
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dx: -40, events: 100)
+        driver.wait(0.35)
+        XCTAssertEqual(driver.haptics, [.step])
+        driver.wait(0.4) // 0,75 s d'immobilité : pas encore annulé
+        driver.move(dy: 40)
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [.bottomLeftQuarter])
+    }
+
+    func testChangedEventsWithoutDeltaDoNotCountAsMovement() {
+        // Si macOS verrouille l'axe du défilement après « gauche », le
+        // « bas » qui suit arrive en `changed` à deltas nuls : la machine n'y
+        // voit aucun mouvement et annule.
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dx: -40)
+        driver.wait(0.35)
+        for _ in 0 ..< 60 { driver.scroll(.changed, dx: 0, dy: 0) } // 0,6 s de « bas » écrasé
+        XCTAssertTrue(driver.effects.contains(.cancelled(.stillness)))
     }
 
     func testEscapeOutsideAGesturePasses() {

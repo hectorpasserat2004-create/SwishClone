@@ -161,6 +161,7 @@ enum GestureEventTap {
 
         case .scrollWheel:
             guard let scroll = NSEvent(cgEvent: event) else { return .pass }
+            logScroll(scroll, event)
             return process(
                 .scroll(
                     phase: phase(scroll.phase),
@@ -238,6 +239,7 @@ enum GestureEventTap {
     private static func tick() {
         scheduledDeadline = nil
         deadlineTimer = nil
+        if let summary = machine.debugSummary(at: now) { debugLog("tick : \(summary)") }
         let output = machine.handle(.tick, at: now) { false }
         apply(output.effects)
         synchronize()
@@ -258,8 +260,12 @@ enum GestureEventTap {
             case let .haptic(haptic):
                 // Étape 4 : le retour haptique.
                 debugLog("haptique : \(haptic)")
-            case .cancelled:
-                debugLog("geste annulé")
+            case let .cancelled(reason):
+                switch reason {
+                case .stillness: debugLog("geste annulé (immobilité)")
+                case .escape: debugLog("geste annulé (Échap)")
+                case .interrupted: debugLog("geste annulé (interrompu par le système)")
+                }
             }
         }
     }
@@ -315,6 +321,27 @@ enum GestureEventTap {
         if phase.contains(.ended) { return .ended }
         if phase.contains(.cancelled) { return .cancelled }
         return nil
+    }
+
+    /// Diagnostic du point 1 (enchaînement intermittent) : pour chaque
+    /// événement de scroll pendant un geste suivi, les deltas que la machine
+    /// reçoit (`NSEvent.deltaX/Y`), les deltas « précis »
+    /// (`scrollingDeltaX/Y`) et les champs bruts du CGEvent — pour savoir si
+    /// macOS écrase l'axe perpendiculaire après une première direction
+    /// (verrouillage d'axe), et à quel niveau.
+    private static func logScroll(_ scroll: NSEvent, _ event: CGEvent) {
+        guard GestureClassifier.debugLoggingEnabled,
+              machine.isTracking || scroll.phase.contains(.began) else { return }
+        let rawVertical = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
+        let rawHorizontal = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)
+        print(String(
+            format: "[GestureEventTap] scroll phase=%lu momentum=%lu delta=(%.2f, %.2f) scrollingDelta=(%.2f, %.2f) brut(h, v)=(%.1f, %.1f) | %@",
+            scroll.phase.rawValue, scroll.momentumPhase.rawValue,
+            scroll.deltaX, scroll.deltaY,
+            scroll.scrollingDeltaX, scroll.scrollingDeltaY,
+            rawHorizontal, rawVertical,
+            machine.debugSummary(at: now) ?? "pas de geste suivi"
+        ))
     }
 
     private static func debugLog(_ message: @autoclosure () -> String) {

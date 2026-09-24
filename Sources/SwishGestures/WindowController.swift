@@ -240,6 +240,8 @@ public enum WindowController {
         }
         lastActionDate = Date()
 
+        debugLog("perform \(action) sur une fenêtre de cadre \(frame(of: window).map { "\($0)" } ?? "illisible")")
+
         switch action {
         case .minimize:
             // Repose sur AXMinimizedAttribute : fonctionne pour la grande
@@ -259,6 +261,7 @@ public enum WindowController {
                 debugLog("action \(action) impossible : cadre ou écran introuvable")
                 return
             }
+            debugLog("perform \(action) → cadre visé \(target)")
             animatedMoveAndResize(
                 window: window,
                 x: target.minX,
@@ -266,6 +269,20 @@ public enum WindowController {
                 width: target.width,
                 height: target.height
             )
+            // Diagnostic du point 2 (quart puis demi) : relit le cadre après
+            // la fin de l'animation, puis une seconde fois plus tard. Un
+            // écart dit que quelqu'un d'autre — l'app, macOS — a redimensionné
+            // la fenêtre après nous.
+            let duration = GestureSettings.shared.animationDuration
+            for delay in [duration + 0.05, duration + 0.6] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    MainActor.assumeIsolated {
+                        let actual = frame(of: window)
+                        let drift = actual.map { $0.equalTo(target) ? "identique" : "ÉCART" } ?? "illisible"
+                        debugLog(String(format: "relu à +%.2fs : ", delay) + "\(actual.map { "\($0)" } ?? "?") — \(drift) (visé \(target))")
+                    }
+                }
+            }
         }
     }
 
@@ -281,6 +298,7 @@ public enum WindowController {
     /// Chemin de la fenêtre de test locale (`TouchGestureView`) : agit sur
     /// la fenêtre au premier plan, et jamais sur la nôtre.
     public static func handleGesture(_ gesture: Gesture) {
+        debugLog("handleGesture (fenêtre de test) : \(gesture)")
         guard isAccessibilityTrusted() else {
             requestAccessibilityPermission()
             return
