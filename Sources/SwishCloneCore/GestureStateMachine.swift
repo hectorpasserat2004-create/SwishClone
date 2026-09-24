@@ -204,26 +204,6 @@ public struct GestureStateMachine: Sendable {
         return effects
     }
 
-    /// Diagnostic : l'état du geste en cours, lisible, à l'instant `now`.
-    /// `nil` hors d'un geste suivi.
-    public func debugSummary(at now: TimeInterval) -> String? {
-        func seconds(_ value: TimeInterval) -> String { String(format: "%.2fs", value) }
-        switch state {
-        case let .swipe(t):
-            let still = now - t.lastMovementAt
-            return "swipe étapes=\(t.steps) candidate=\(t.candidate.map { "\($0)" } ?? "aucune") "
-                + String(format: "acc=(%.1f, %.1f) ", t.accX, t.accY)
-                + "immobile depuis \(seconds(still)), annulation dans \(seconds(configuration.cancelTimeout - still))"
-        case let .pinch(p):
-            let still = now - p.lastMovementAt
-            return "pincement étapes=\(p.steps) candidate=\(p.candidate.map { "\($0)" } ?? "aucune") "
-                + String(format: "pic=%.3f ", p.stepPeak)
-                + "immobile depuis \(seconds(still)), annulation dans \(seconds(configuration.cancelTimeout - still))"
-        default:
-            return nil
-        }
-    }
-
     // MARK: - Entrée
 
     /// `isOnTarget` n'est appelé qu'au début d'un geste — jamais pendant.

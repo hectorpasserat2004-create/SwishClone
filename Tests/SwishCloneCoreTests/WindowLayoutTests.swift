@@ -96,6 +96,7 @@ final class WindowLayoutTests: XCTestCase {
     func testNonGeometricActionsHaveNoFrame() {
         XCTAssertNil(frame(.minimize))
         XCTAssertNil(frame(.toggleFullScreen))
+        XCTAssertNil(frame(.close))
     }
 
     func testSecondaryScreenAboveKeepsItsOrigin() {

@@ -12,6 +12,12 @@ import SwishCloneCore
 /// Ne demande jamais la permission Accessibility lui-même : c'est à
 /// l'hôte de décider quand montrer la fenêtre du système (voir
 /// `WindowController.requestAccessibilityPermission()`).
+///
+/// **Un seul hôte à la fois sur une même session.** Rien n'empêche deux
+/// processus (l'app SwishClone et bran) de démarrer chacun leur détection :
+/// les deux suivent alors le même geste et agissent sur la même fenêtre.
+/// Pour les tests manuels, ne jamais les faire tourner ensemble — voir le
+/// README.
 @MainActor
 public enum GestureMonitor {
 

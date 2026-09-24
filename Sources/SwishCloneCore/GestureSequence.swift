@@ -36,7 +36,9 @@ public enum GestureSequence {
     public static func resolve(pinches steps: [PinchDirection]) -> WindowAction? {
         switch steps {
         case [.out]: return .toggleFullScreen
-        case [.in_]: return .centerReduced
+        // Comme Swish : resserrer ferme. Resserrer deux fois (quitter l'app)
+        // attend le P1, et une phase de pincement lisible.
+        case [.in_]: return .close
         default: return nil
         }
     }

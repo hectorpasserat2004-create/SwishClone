@@ -254,10 +254,7 @@ final class GestureStateMachineTests: XCTestCase {
         XCTAssertTrue(driver.effects.contains(.cancelled(.interrupted)))
     }
 
-    // MARK: - Point 1 du test manuel : ce que la machine fait aujourd'hui
-    //
-    // Ces deux tests décrivent le comportement actuel, pour le diagnostic —
-    // ils ne disent pas que c'est le bon.
+    // MARK: - Ce qui compte comme immobilité
 
     func testStillnessIsCountedFromTheLastMovementNotFromTheGestureStart() {
         // Un long premier mouvement (1 s) ne consomme pas le délai : c'est
@@ -274,9 +271,8 @@ final class GestureStateMachineTests: XCTestCase {
     }
 
     func testChangedEventsWithoutDeltaDoNotCountAsMovement() {
-        // Si macOS verrouille l'axe du défilement après « gauche », le
-        // « bas » qui suit arrive en `changed` à deltas nuls : la machine n'y
-        // voit aucun mouvement et annule.
+        // Des `changed` sans déplacement (doigts posés, `stationary`) ne
+        // repoussent pas l'annulation.
         var driver = Driver()
         driver.scroll(.began)
         driver.move(dx: -40)
@@ -366,11 +362,11 @@ final class GestureStateMachineTests: XCTestCase {
         XCTAssertEqual(driver.commits, [.toggleFullScreen])
     }
 
-    func testPinchInCentersForNow() {
+    func testPinchInClosesTheWindow() {
         var driver = Driver()
         driver.pinch(to: [-0.03, -0.08, -0.14])
         driver.wait(0.2)
-        XCTAssertEqual(driver.commits, [.centerReduced])
+        XCTAssertEqual(driver.commits, [.close])
     }
 
     func testPinchDecidesOnItsPeakNotOnItsLastValue() {
@@ -400,7 +396,7 @@ final class GestureStateMachineTests: XCTestCase {
         driver.pinch(to: [-0.05, -0.12])
         driver.wait(0.35)
         XCTAssertEqual(driver.haptics, [])
-        XCTAssertEqual(driver.commits, [.centerReduced])
+        XCTAssertEqual(driver.commits, [.close])
     }
 
     func testOffTargetPinchPassesAndIsCheckedOnce() {
@@ -428,7 +424,7 @@ final class GestureStateMachineTests: XCTestCase {
         driver.send(.magnify(cumulative: -0.05, phase: nil), after: 0)
         driver.pinch(to: [-0.15])
         driver.wait(0.2)
-        XCTAssertEqual(driver.commits, [.toggleFullScreen, .centerReduced])
+        XCTAssertEqual(driver.commits, [.toggleFullScreen, .close])
     }
 
     // MARK: - Remise à zéro

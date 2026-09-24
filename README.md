@@ -36,6 +36,17 @@ Lancer les tests unitaires :
 swift test
 ```
 
+## Tests manuels : une seule app de gestes à la fois
+
+**Ne jamais faire tourner bran et l'app de test SwishClone en même temps.**
+bran embarque la même bibliothèque `SwishGestures` : avec les deux lancés,
+deux taps écoutent le même trackpad, deux machines à états suivent le
+même geste, et chacune applique son action à la même fenêtre. Les
+résultats sont alors faux et trompeurs — enchaînements qui semblent
+échouer, fenêtre qui passe en quart puis revient en moitié, pincement
+qui n'a plus d'effet. Quitter bran (ou éteindre ses gestes dans ses
+réglages) avant chaque session de test, et inversement.
+
 ## Prérequis
 - Xcode Command Line Tools installés (`xcode-select --install`)
 - Pas besoin de l'app Xcode complète

@@ -50,31 +50,19 @@ public enum GestureTarget {
         AXUIElementSetMessagingTimeout(systemWide, messagingTimeout)
 
         var hit: AXUIElement?
-        let result = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit)
-        guard result == .success, let hit else {
-            debugLog("pas de cible : aucun élément AX en \(point) (erreur \(result.rawValue))")
-            return nil
-        }
+        guard AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit) == .success,
+              let hit else { return nil }
 
         var pid: pid_t = 0
-        guard AXUIElementGetPid(hit, &pid) == .success else {
-            debugLog("pas de cible : processus de l'élément introuvable")
-            return nil
-        }
-        guard pid != ProcessInfo.processInfo.processIdentifier else {
-            debugLog("pas de cible : élément de notre propre app")
-            return nil
-        }
+        guard AXUIElementGetPid(hit, &pid) == .success,
+              pid != ProcessInfo.processInfo.processIdentifier else { return nil }
 
         var path: [AXNodeInfo] = []
         var current = hit
         for _ in 0 ..< maxDepth {
             let info = nodeInfo(current)
             if info.role == kAXWindowRole as String {
-                guard let frame = WindowController.frame(of: current) else {
-                    debugLog("pas de cible : cadre de la fenêtre illisible (chemin \(path.compactMap(\.role)))")
-                    return nil
-                }
+                guard let frame = WindowController.frame(of: current) else { return nil }
                 let verdict = TitlebarHitTest.evaluate(
                     path: path,
                     window: info,
@@ -83,20 +71,15 @@ public enum GestureTarget {
                     zoneHeight: zoneHeight
                 )
                 guard verdict == .titlebar else {
-                    debugLog("pas de cible : \(verdict) (chemin \(path.compactMap(\.role)), fenêtre \(info.subrole ?? "sans sous-rôle"))")
+                    debugLog("pas de cible : \(verdict) (chemin \(path.compactMap(\.role)))")
                     return nil
                 }
-                debugLog("cible : fenêtre \(info.subrole ?? "sans sous-rôle") \(frame) (chemin \(path.compactMap(\.role)))")
                 return Target(window: current, pid: pid, frame: frame)
             }
             path.append(info)
-            guard let parent = element(current, kAXParentAttribute) else {
-                debugLog("pas de cible : aucune fenêtre au-dessus de l'élément (chemin \(path.compactMap(\.role)))")
-                return nil
-            }
+            guard let parent = element(current, kAXParentAttribute) else { return nil }
             current = parent
         }
-        debugLog("pas de cible : fenêtre introuvable à moins de \(maxDepth) niveaux")
         return nil
     }
 

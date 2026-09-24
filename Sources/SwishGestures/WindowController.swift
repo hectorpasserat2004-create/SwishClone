@@ -240,8 +240,6 @@ public enum WindowController {
         }
         lastActionDate = Date()
 
-        debugLog("perform \(action) sur une fenêtre de cadre \(frame(of: window).map { "\($0)" } ?? "illisible")")
-
         switch action {
         case .minimize:
             // Repose sur AXMinimizedAttribute : fonctionne pour la grande
@@ -254,6 +252,9 @@ public enum WindowController {
         case .toggleFullScreen:
             toggleNativeFullScreen(window: window)
 
+        case .close:
+            pressCloseButton(of: window)
+
         default:
             guard let current = frame(of: window),
                   let visible = visibleFrame(forWindowAt: current),
@@ -261,7 +262,6 @@ public enum WindowController {
                 debugLog("action \(action) impossible : cadre ou écran introuvable")
                 return
             }
-            debugLog("perform \(action) → cadre visé \(target)")
             animatedMoveAndResize(
                 window: window,
                 x: target.minX,
@@ -269,20 +269,23 @@ public enum WindowController {
                 width: target.width,
                 height: target.height
             )
-            // Diagnostic du point 2 (quart puis demi) : relit le cadre après
-            // la fin de l'animation, puis une seconde fois plus tard. Un
-            // écart dit que quelqu'un d'autre — l'app, macOS — a redimensionné
-            // la fenêtre après nous.
-            let duration = GestureSettings.shared.animationDuration
-            for delay in [duration + 0.05, duration + 0.6] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    MainActor.assumeIsolated {
-                        let actual = frame(of: window)
-                        let drift = actual.map { $0.equalTo(target) ? "identique" : "ÉCART" } ?? "illisible"
-                        debugLog(String(format: "relu à +%.2fs : ", delay) + "\(actual.map { "\($0)" } ?? "?") — \(drift) (visé \(target))")
-                    }
-                }
-            }
+        }
+    }
+
+    /// Presse le bouton de fermeture par AX, plutôt que de fermer la fenêtre
+    /// d'autorité : c'est le même chemin qu'un clic, donc l'app décide —
+    /// feuille « Enregistrer ? » comprise. Une fenêtre sans bouton de
+    /// fermeture (certains panneaux) n'est pas touchée.
+    private static func pressCloseButton(of window: AXUIElement) {
+        var button: AnyObject?
+        guard AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &button) == .success,
+              let button, CFGetTypeID(button) == AXUIElementGetTypeID() else {
+            debugLog("fermeture impossible : pas de bouton de fermeture exposé par AX")
+            return
+        }
+        let result = AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+        if result != .success {
+            debugLog("fermeture refusée par l'app (erreur AX \(result.rawValue))")
         }
     }
 
@@ -298,7 +301,6 @@ public enum WindowController {
     /// Chemin de la fenêtre de test locale (`TouchGestureView`) : agit sur
     /// la fenêtre au premier plan, et jamais sur la nôtre.
     public static func handleGesture(_ gesture: Gesture) {
-        debugLog("handleGesture (fenêtre de test) : \(gesture)")
         guard isAccessibilityTrusted() else {
             requestAccessibilityPermission()
             return

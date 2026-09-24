@@ -47,7 +47,7 @@ public enum WindowLayout {
     public static let reducedScale: CGFloat = 0.6
 
     /// `nil` pour les actions qui ne sont pas un cadre (réduire, plein écran
-    /// natif) : `WindowController` les traite à part.
+    /// natif, fermer) : `WindowController` les traite à part.
     public static func frame(for action: WindowAction, in visible: CGRect) -> CGRect? {
         let halfWidth = visible.width / 2
         let halfHeight = visible.height / 2
@@ -84,7 +84,7 @@ public enum WindowLayout {
                 width: width,
                 height: height
             )
-        case .minimize, .toggleFullScreen:
+        case .minimize, .toggleFullScreen, .close:
             return nil
         }
     }

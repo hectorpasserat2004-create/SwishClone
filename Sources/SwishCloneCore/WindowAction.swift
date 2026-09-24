@@ -19,7 +19,10 @@ public enum WindowAction: Equatable, Sendable {
     case minimize
     /// Le plein écran natif (bouton vert, bureau à part).
     case toggleFullScreen
-    /// Fenêtre recentrée à 60 %. **Provisoire** : le pincement deviendra
-    /// « fermer » au P1, et le centrage passera au double tap.
+    /// Le bouton rouge, comme un clic : l'app garde la main (un document non
+    /// enregistré ouvre sa feuille de dialogue, rien n'est perdu).
+    case close
+    /// Fenêtre recentrée à 60 %. Plus associée à aucun geste depuis que le
+    /// pincement ferme la fenêtre ; réservée au double tap (P1).
     case centerReduced
 }
