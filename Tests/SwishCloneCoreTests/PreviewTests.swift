@@ -28,10 +28,16 @@ final class PreviewContentTests: XCTestCase {
         }
     }
 
-    func testNonGeometricActionsAreSymbols() {
-        XCTAssertEqual(content(.minimize), .symbol(.minimize))
-        XCTAssertEqual(content(.toggleFullScreen), .symbol(.fullScreen))
-        XCTAssertEqual(content(.close), .symbol(.close))
+    func testWindowButtonsAreTrafficLights() {
+        XCTAssertEqual(content(.close), .light(.close), "fermer : feu rouge")
+        XCTAssertEqual(content(.minimize), .light(.minimize), "réduire : feu jaune")
+        XCTAssertEqual(content(.toggleFullScreen), .light(.fullScreen), "plein écran : feu vert")
+    }
+
+    func testQuittingIsNotDrawnLikeClosing() {
+        // Même feu rouge, mais « quitter » porte l'icône de l'app : les deux
+        // ne doivent jamais se confondre.
+        XCTAssertNotEqual(content(.quitApp), content(.close))
     }
 
     func testQuitAndUnrecognized() {
@@ -50,74 +56,55 @@ final class PreviewContentTests: XCTestCase {
 
 final class PreviewPlacementTests: XCTestCase {
 
-    /// Écran 1440 × 900 en coordonnées AX (origine en haut à gauche).
-    private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
-    private let size = CGSize(width: 64, height: 48)
+    /// Deux écrans en coordonnées AX : le principal (barre de menus 25 pt,
+    /// Dock 74 pt) et un second à droite.
+    private let screens = [
+        CGRect(x: 0, y: 0, width: 1440, height: 900),
+        CGRect(x: 1440, y: 0, width: 1920, height: 1080),
+    ]
+    private let size = CGSize(width: 160, height: 160)
 
-    private func frame(cursor: CGPoint, screen: CGRect? = nil) -> CGRect {
-        PreviewPlacement.frame(size: size, cursor: cursor, screen: screen ?? self.screen)
+    // MARK: - Centrage
+
+    func testCenteredInTheUsableArea() {
+        let visible = CGRect(x: 0, y: 25, width: 1440, height: 801)
+        let panel = PreviewPlacement.frame(size: size, centeredIn: visible)
+        XCTAssertEqual(panel, CGRect(x: 640, y: 345.5, width: 160, height: 160))
+        XCTAssertEqual(panel.midY, visible.midY, "centré entre la barre de menus et le Dock, pas sur l'écran entier")
     }
 
-    func testOnATitlebarNearTheTopThePanelIsBelowTheCursor() {
-        let cursor = CGPoint(x: 720, y: 40)
-        let panel = frame(cursor: cursor)
-        XCTAssertGreaterThan(panel.minY, cursor.y, "sous le curseur")
-        XCTAssertEqual(panel.midX, cursor.x, accuracy: 1)
-    }
-
-    func testOnTheBottomDockThePanelIsAboveTheIcon() {
-        let cursor = CGPoint(x: 600, y: 880)
-        let panel = frame(cursor: cursor)
-        XCTAssertLessThan(panel.maxY, cursor.y, "au-dessus du curseur")
-    }
-
-    func testOnALeftDockThePanelIsToTheRight() {
-        let cursor = CGPoint(x: 20, y: 450)
-        let panel = frame(cursor: cursor)
-        XCTAssertGreaterThan(panel.minX, cursor.x, "à droite du curseur")
-    }
-
-    func testThePanelNeverCoversTheCursor() {
-        let cursors = [
-            CGPoint(x: 720, y: 40), CGPoint(x: 600, y: 880), CGPoint(x: 20, y: 450),
-            CGPoint(x: 1400, y: 30), CGPoint(x: 300, y: 600),
-        ]
-        for cursor in cursors {
-            XCTAssertFalse(frame(cursor: cursor).contains(cursor), "\(cursor)")
-        }
-    }
-
-    func testThePanelStaysOnScreen() {
-        let corners = [CGPoint(x: 1, y: 1), CGPoint(x: 1439, y: 1), CGPoint(x: 1, y: 899), CGPoint(x: 1439, y: 899)]
-        let bounds = screen.insetBy(dx: PreviewPlacement.margin, dy: PreviewPlacement.margin)
-        for cursor in corners {
-            XCTAssertTrue(bounds.contains(frame(cursor: cursor)), "\(cursor)")
-        }
-    }
-
-    func testTinyScreenStillHoldsThePanel() {
-        // Le décalage seul sortirait du cadre : c'est le maintien dans
-        // l'écran qui le rattrape (écran à peine plus grand que le panneau,
-        // ou écran mal identifié).
-        let tiny = CGRect(x: 0, y: 0, width: 90, height: 70)
-        let bounds = tiny.insetBy(dx: PreviewPlacement.margin, dy: PreviewPlacement.margin)
-        for cursor in [CGPoint(x: 5, y: 5), CGPoint(x: 85, y: 65), CGPoint(x: 45, y: 2)] {
-            XCTAssertTrue(bounds.contains(frame(cursor: cursor, screen: tiny)), "\(cursor)")
-        }
-    }
-
-    func testCursorAtTheCenterPutsThePanelBelow() {
-        let panel = frame(cursor: CGPoint(x: 720, y: 450))
-        XCTAssertGreaterThan(panel.minY, 450)
-    }
-
-    func testSecondaryScreenAboveThePrimary() {
+    func testCenteredOnASecondaryScreenAboveThePrimary() {
         let above = CGRect(x: 0, y: -1080, width: 1920, height: 1080)
-        let cursor = CGPoint(x: 960, y: -1060)
-        let panel = frame(cursor: cursor, screen: above)
-        XCTAssertTrue(above.contains(panel))
-        XCTAssertGreaterThan(panel.minY, cursor.y)
+        let panel = PreviewPlacement.frame(size: size, centeredIn: above)
+        XCTAssertEqual(panel.midX, 960)
+        XCTAssertEqual(panel.midY, -540)
     }
+
+    // MARK: - Quel écran
+
+    func testWindowTargetUsesTheWindowsScreenNotTheCursors() {
+        // Fenêtre surtout sur le second écran, geste commencé sur sa barre de
+        // titre encore au-dessus du premier.
+        let window = CGRect(x: 1200, y: 100, width: 1000, height: 600)
+        let cursor = CGPoint(x: 1300, y: 110)
+        XCTAssertEqual(PreviewPlacement.screenIndex(targetFrame: window, cursor: cursor, screens: screens), 1)
+    }
+
+    func testDockTargetUsesTheCursorsScreen() {
+        XCTAssertEqual(PreviewPlacement.screenIndex(targetFrame: nil, cursor: CGPoint(x: 600, y: 880), screens: screens), 0)
+        XCTAssertEqual(PreviewPlacement.screenIndex(targetFrame: nil, cursor: CGPoint(x: 2000, y: 1060), screens: screens), 1)
+    }
+
+    func testOffScreenWindowFallsBackOnTheCursorsScreen() {
+        let lost = CGRect(x: 9000, y: 9000, width: 400, height: 300)
+        XCTAssertEqual(PreviewPlacement.screenIndex(targetFrame: lost, cursor: CGPoint(x: 100, y: 10), screens: screens), 0)
+    }
+
+    func testNoScreenAtAll() {
+        XCTAssertNil(PreviewPlacement.screenIndex(targetFrame: nil, cursor: CGPoint(x: 9000, y: 9000), screens: screens))
+    }
+
+    // MARK: - Conversion
 
     func testCocoaConversionIsTheInverseOfAX() {
         let ax = CGRect(x: 100, y: 60, width: 64, height: 48)

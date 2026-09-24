@@ -9,8 +9,11 @@ import CoreGraphics
 public enum PreviewContent: Equatable, Sendable {
     /// La zone visée, dans un écran unitaire (0…1, origine en haut à gauche).
     case zone(CGRect)
-    case symbol(PreviewSymbol)
-    /// L'icône de l'app, marquée « quitter ». L'hôte fournit l'icône.
+    /// Un feu tricolore de macOS, redessiné : rouge pour fermer, jaune pour
+    /// réduire, vert pour le plein écran.
+    case light(TrafficLight)
+    /// Le feu rouge, avec l'icône de l'app en petit dans son coin : quitter
+    /// une app se distingue de fermer une fenêtre. L'hôte fournit l'icône.
     case quitApp
     /// Une séquence sans action : le lever ne fera rien.
     case unrecognized
@@ -21,9 +24,9 @@ public enum PreviewContent: Equatable, Sendable {
             return
         }
         switch action {
-        case .minimize: self = .symbol(.minimize)
-        case .toggleFullScreen: self = .symbol(.fullScreen)
-        case .close: self = .symbol(.close)
+        case .minimize: self = .light(.minimize)
+        case .toggleFullScreen: self = .light(.fullScreen)
+        case .close: self = .light(.close)
         case .quitApp: self = .quitApp
         default:
             let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -32,17 +35,10 @@ public enum PreviewContent: Equatable, Sendable {
     }
 }
 
-public enum PreviewSymbol: Equatable, Sendable {
-    case minimize, fullScreen, close
-
-    /// Nom SF Symbols.
-    public var systemName: String {
-        switch self {
-        case .minimize: return "arrow.down.to.line"
-        case .fullScreen: return "arrow.up.left.and.arrow.down.right"
-        case .close: return "xmark"
-        }
-    }
+/// Les trois boutons de fenêtre de macOS, tels que le panneau les
+/// redessine (couleurs et tracés dans `GesturePreviewPanel`).
+public enum TrafficLight: Equatable, Sendable {
+    case close, minimize, fullScreen
 }
 
 extension GestureStateMachine.Preview {
@@ -70,45 +66,29 @@ extension GestureStateMachine.Preview {
     }
 }
 
-/// **Où poser le panneau** : près du curseur, décalé vers le centre de
-/// l'écran. Sur une barre de titre (en haut), il tombe sous le curseur ; sur
-/// le Dock du bas, au-dessus de l'icône ; sur un Dock latéral, à côté. Une
-/// seule règle pour toutes les cibles, en coordonnées AX (origine en haut à
-/// gauche).
+/// **Où poser le panneau** : au centre de la zone utile de l'écran de la
+/// cible, façon HUD système — entre la barre de menus et le Dock. En
+/// coordonnées AX (origine en haut à gauche).
 public enum PreviewPlacement {
 
-    /// Écart entre le curseur et le bord le plus proche du panneau.
-    public static let gap: CGFloat = 20
-    /// Marge minimale avec les bords de l'écran.
-    public static let margin: CGFloat = 8
-
-    public static func frame(size: CGSize, cursor: CGPoint, screen: CGRect) -> CGRect {
-        var dx = screen.midX - cursor.x
-        var dy = screen.midY - cursor.y
-        let length = (dx * dx + dy * dy).squareRoot()
-        if length < 1 {
-            // Curseur au centre : sous lui, par défaut.
-            dx = 0
-            dy = 1
-        } else {
-            dx /= length
-            dy /= length
+    /// L'écran de la cible : celui de la fenêtre visée (son centre, sinon
+    /// sa plus grande part), ou, sans fenêtre — une icône du Dock —, celui
+    /// du curseur.
+    public static func screenIndex(targetFrame: CGRect?, cursor: CGPoint, screens: [CGRect]) -> Int? {
+        if let targetFrame, let index = ScreenGeometry.screenIndex(for: targetFrame, among: screens) {
+            return index
         }
+        let probe = CGRect(x: cursor.x, y: cursor.y, width: 1, height: 1)
+        return ScreenGeometry.screenIndex(for: probe, among: screens)
+    }
 
-        // Assez loin pour que le panneau ne recouvre pas le curseur, quelle
-        // que soit la direction : demi-taille projetée sur la direction, plus
-        // l'écart.
-        let reach = abs(dx) * size.width / 2 + abs(dy) * size.height / 2 + gap
-        var frame = CGRect(
-            x: cursor.x + dx * reach - size.width / 2,
-            y: cursor.y + dy * reach - size.height / 2,
+    /// Centré dans `visible`, la zone utile de cet écran.
+    public static func frame(size: CGSize, centeredIn visible: CGRect) -> CGRect {
+        CGRect(
+            x: visible.midX - size.width / 2,
+            y: visible.midY - size.height / 2,
             width: size.width,
             height: size.height
         )
-
-        let bounds = screen.insetBy(dx: margin, dy: margin)
-        frame.origin.x = min(max(frame.minX, bounds.minX), bounds.maxX - size.width)
-        frame.origin.y = min(max(frame.minY, bounds.minY), bounds.maxY - size.height)
-        return frame
     }
 }

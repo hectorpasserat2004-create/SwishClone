@@ -56,7 +56,8 @@ enum GestureEventTap {
     /// La fenêtre visée par le geste en cours, trouvée par `isOnTarget` au
     /// début du geste et utilisée au lever.
     private static var target: GestureTarget.Target?
-    /// Le curseur au début du geste : c'est là que se pose l'aperçu.
+    /// Le curseur au début du geste : son écran accueille l'aperçu quand la
+    /// cible n'est pas une fenêtre (icône du Dock).
     private static var origin: CGPoint = .zero
 
     private static var deadlineTimer: Timer?
@@ -266,11 +267,23 @@ enum GestureEventTap {
                 guard GestureSettings.shared.previewEnabled else { continue }
                 var appName: String?
                 var appIcon: NSImage?
-                if case let .dockApp(pid, name) = target {
+                var targetFrame: CGRect?
+                switch target {
+                case let .dockApp(pid, name):
                     appName = name
                     appIcon = NSRunningApplication(processIdentifier: pid)?.icon
+                case let .window(_, frame):
+                    targetFrame = frame
+                case nil:
+                    break
                 }
-                GesturePreviewPanel.show(preview, cursor: origin, appName: appName, appIcon: appIcon)
+                GesturePreviewPanel.show(
+                    preview,
+                    targetFrame: targetFrame,
+                    cursor: origin,
+                    appName: appName,
+                    appIcon: appIcon
+                )
             case .hidePreview:
                 GesturePreviewPanel.hide()
             case let .haptic(haptic):
