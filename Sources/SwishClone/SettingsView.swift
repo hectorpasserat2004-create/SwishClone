@@ -42,6 +42,11 @@ struct SettingsView: View {
                 case .general:
                     Toggle("Swipe (gauche, droite, haut, bas)", isOn: $settings.swipeEnabled)
                     Toggle("Pinch (in, out)", isOn: $settings.pinchEnabled)
+                    Toggle("Afficher l'aperçu pendant le geste", isOn: $settings.previewEnabled)
+                    Toggle("Retour haptique", isOn: $settings.hapticsEnabled)
+                    Text("Le retour haptique marque chaque étape validée — le moment où l'on peut enchaîner une autre direction — et l'annulation. Il demande un trackpad Force Touch.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                 case .sensitivity:
                     sliderRow(

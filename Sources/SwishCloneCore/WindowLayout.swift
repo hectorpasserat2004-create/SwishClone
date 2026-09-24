@@ -21,6 +21,12 @@ public enum ScreenGeometry {
         )
     }
 
+    /// L'inverse, pour poser une fenêtre AppKit à un cadre calculé en AX. La
+    /// formule est la même : le changement d'origine est sa propre inverse.
+    public static func cocoaRect(fromAX rect: CGRect, primaryScreenHeight: CGFloat) -> CGRect {
+        axRect(fromCocoa: rect, primaryScreenHeight: primaryScreenHeight)
+    }
+
     /// L'écran qui porte la fenêtre : celui qui contient son centre, sinon
     /// celui qui en recouvre la plus grande part. `nil` si aucun (fenêtre
     /// entièrement hors écran).

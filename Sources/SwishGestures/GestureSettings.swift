@@ -29,6 +29,8 @@ public final class GestureSettings: ObservableObject {
         static let pinchEnabled = "com.swishclone.pinchEnabled"
         static let stepPause = "com.swishclone.stepPause"
         static let cancelTimeout = "com.swishclone.cancelTimeout"
+        static let previewEnabled = "com.swishclone.previewEnabled"
+        static let hapticsEnabled = "com.swishclone.hapticsEnabled"
     }
 
     /// Somme cumulée de scroll en dessous de laquelle un swipe est ignoré.
@@ -71,6 +73,17 @@ public final class GestureSettings: ObservableObject {
         didSet { defaults.set(cancelTimeout, forKey: Key.cancelTimeout) }
     }
 
+    /// Le panneau qui montre, pendant le geste, ce que fera le lever.
+    @Published public var previewEnabled: Bool {
+        didSet { defaults.set(previewEnabled, forKey: Key.previewEnabled) }
+    }
+
+    /// Le retour haptique à chaque étape validée et à l'annulation (si le
+    /// trackpad le permet et que macOS l'autorise).
+    @Published public var hapticsEnabled: Bool {
+        didSet { defaults.set(hapticsEnabled, forKey: Key.hapticsEnabled) }
+    }
+
     private let defaults = UserDefaults.standard
 
     /// Les réglages dont la machine à états a besoin, figés en une valeur.
@@ -97,5 +110,7 @@ public final class GestureSettings: ObservableObject {
         pinchEnabled = defaults.object(forKey: Key.pinchEnabled) as? Bool ?? true
         stepPause = defaults.object(forKey: Key.stepPause) as? Double ?? 0.3
         cancelTimeout = defaults.object(forKey: Key.cancelTimeout) as? Double ?? 0.8
+        previewEnabled = defaults.object(forKey: Key.previewEnabled) as? Bool ?? true
+        hapticsEnabled = defaults.object(forKey: Key.hapticsEnabled) as? Bool ?? true
     }
 }

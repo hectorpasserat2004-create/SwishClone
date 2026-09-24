@@ -56,6 +56,8 @@ enum GestureEventTap {
     /// La fenêtre visée par le geste en cours, trouvée par `isOnTarget` au
     /// début du geste et utilisée au lever.
     private static var target: GestureTarget.Target?
+    /// Le curseur au début du geste : c'est là que se pose l'aperçu.
+    private static var origin: CGPoint = .zero
 
     private static var deadlineTimer: Timer?
     private static var scheduledDeadline: TimeInterval?
@@ -121,6 +123,7 @@ enum GestureEventTap {
         scheduledDeadline = nil
         _ = machine.reset()
         target = nil
+        GesturePreviewPanel.hide()
 
         for (tap, source) in [(gestureTap, gestureSource), (keyTap, keySource)] {
             if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
@@ -228,6 +231,7 @@ enum GestureEventTap {
 
         let output = machine.handle(event, at: now) {
             target = GestureTarget.hitTest(at: location, zoneHeight: zoneHeight)
+            origin = location
             return target?.kind
         }
         apply(output.effects)
@@ -259,13 +263,23 @@ enum GestureEventTap {
                     WindowController.perform(action, on: window)
                 }
             case let .showPreview(preview):
-                // Étape 4 : le panneau d'aperçu.
-                debugLog("aperçu : \(preview)")
+                guard GestureSettings.shared.previewEnabled else { continue }
+                var appName: String?
+                var appIcon: NSImage?
+                if case let .dockApp(pid, name) = target {
+                    appName = name
+                    appIcon = NSRunningApplication(processIdentifier: pid)?.icon
+                }
+                GesturePreviewPanel.show(preview, cursor: origin, appName: appName, appIcon: appIcon)
             case .hidePreview:
-                debugLog("aperçu masqué")
+                GesturePreviewPanel.hide()
             case let .haptic(haptic):
-                // Étape 4 : le retour haptique.
+                // Gardé dans le log le temps de vérifier, au toucher, que le
+                // retour arrive bien quand le log le dit.
                 debugLog("haptique : \(haptic)")
+                guard GestureSettings.shared.hapticsEnabled else { continue }
+                let pattern: NSHapticFeedbackManager.FeedbackPattern = haptic == .step ? .alignment : .generic
+                NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
             case let .cancelled(reason):
                 switch reason {
                 case .stillness: debugLog("geste annulé (immobilité)")
