@@ -39,7 +39,7 @@ public struct GestureStateMachine: Sendable {
         public var pinchEnabled = true
         /// Amplitude cumulée, sur une étape, au-delà de laquelle une direction
         /// de swipe devient candidate.
-        public var swipeThreshold: Double = 20
+        public var swipeThreshold: Double = 16
         /// Même chose pour le pincement, en magnitude relative à l'étape.
         public var pinchThreshold: Double = 0.1
         /// Immobilité qui valide l'étape en cours et permet d'en enchaîner une

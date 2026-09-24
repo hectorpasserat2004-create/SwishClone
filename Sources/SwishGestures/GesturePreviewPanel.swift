@@ -2,42 +2,45 @@ import AppKit
 import SwiftUI
 import SwishCloneCore
 
-/// **Le panneau d'aperçu** : ce que fera le lever, affiché pendant le geste,
-/// au centre de l'écran de la cible — façon HUD système (l'ancien HUD de
-/// volume de macOS).
+/// **Le panneau d'aperçu** : ce que fera le lever, affiché pendant le geste.
 ///
-/// Un `NSPanel` qui ne devient jamais la fenêtre active, ignore la souris et
-/// reste visible sur tous les bureaux, par-dessus le plein écran et le Dock.
-/// Il n'a jamais besoin du focus — contrairement au `TitlebarTrackingPanel`
-/// de la Phase 4, qui devait devenir *key* pour recevoir des touches.
+/// Deux styles, selon ce que l'aperçu dit :
 ///
-/// Contenu sans libellé : un mini-écran avec la zone visée, un feu
-/// tricolore redessiné (rouge fermer, jaune réduire, vert plein écran), le
-/// feu rouge avec l'icône de l'app pour « quitter », ou un point
-/// d'interrogation. Le libellé existe quand même (`Preview.label`) : c'est
-/// l'étiquette VoiceOver du panneau. Rendu validé sur la page d'aperçu du
-/// 24/09/2026 avant intégration.
+/// - **Les feux tricolores** (fermer, réduire, plein écran, quitter) : un
+///   disque de 22 pt, à la taille des vrais boutons de fenêtre, posé pile sur
+///   le curseur — un feu, c'est « le bouton que je clique », et le curseur
+///   n'a pas bougé pendant un geste à deux doigts. Sans fond ni cadre. Le
+///   curseur système reste dessiné par-dessus (on ne peut pas le masquer
+///   depuis une app en arrière-plan sans API privée) : sa pointe tombe au
+///   centre du disque.
+/// - **Le mini-écran** (moitié, quart, remplir) et le point d'interrogation :
+///   un HUD de verre de 160 pt au centre de l'écran de la cible, façon HUD
+///   système. Il montre une géométrie relative à l'écran, qui serait à
+///   l'étroit — voire coupée — près d'une barre de titre en haut d'écran.
+///
+/// Un même geste peut passer de l'un à l'autre (↓ réduit, ↓ puis → vise un
+/// quart) : chaque style a donc son propre panneau, et l'un s'efface quand
+/// l'autre apparaît, au lieu de déplacer un panneau unique.
+///
+/// Des `NSPanel` qui ne deviennent jamais la fenêtre active, ignorent la
+/// souris et restent visibles sur tous les bureaux, par-dessus le plein écran
+/// et le Dock. Ils n'ont jamais besoin du focus — contrairement au
+/// `TitlebarTrackingPanel` de la Phase 4, qui devait devenir *key* pour
+/// recevoir des touches.
+///
+/// Le libellé (`Preview.label`) est l'étiquette VoiceOver. Rendu du HUD
+/// validé sur la page d'aperçu du 24/09/2026 avant intégration.
 @MainActor
 enum GesturePreviewPanel {
 
-    static let size = CGSize(width: 160, height: 160)
-    static let cornerRadius: CGFloat = 32
-    static let appearDuration: TimeInterval = 0.12
-    static let disappearDuration: TimeInterval = 0.1
-    static let appearScale: CGFloat = 0.95
+    private static let hud = PreviewWindow(style: .hud)
+    private static let cursorLight = PreviewWindow(style: .cursorLight)
 
-    private static var panel: NSPanel?
-    private static var model = PreviewModel()
-    /// Incrémenté à chaque affichage : un fondu de disparition en retard ne
-    /// doit pas fermer le panneau d'un geste suivant.
-    private static var generation = 0
-    private static var isShown = false
-
-    /// Affiche (ou met à jour) le panneau.
+    /// Affiche (ou met à jour) l'aperçu.
     ///
     /// - Parameters:
     ///   - targetFrame: le cadre de la fenêtre visée, en coordonnées AX —
-    ///     c'est son écran qui accueille le panneau. `nil` pour une icône du
+    ///     c'est son écran qui accueille le HUD. `nil` pour une icône du
     ///     Dock : c'est alors l'écran du curseur.
     ///   - cursor: position du curseur au début du geste, en coordonnées AX.
     ///   - appIcon: pour `quitApp`, l'icône de l'app visée.
@@ -48,65 +51,149 @@ enum GesturePreviewPanel {
         appName: String?,
         appIcon: NSImage?
     ) {
-        model.content = PreviewContent(preview)
+        let content = PreviewContent(preview)
+        let shown: PreviewWindow
+        let other: PreviewWindow
+        switch content {
+        case .light, .quitApp:
+            shown = cursorLight
+            other = hud
+        case .zone, .unrecognized:
+            shown = hud
+            other = cursorLight
+        }
+        other.hide()
+        shown.show(
+            content: content,
+            label: preview.label(appName: appName),
+            appIcon: appIcon,
+            targetFrame: targetFrame,
+            cursor: cursor
+        )
+    }
+
+    static func hide() {
+        hud.hide()
+        cursorLight.hide()
+    }
+}
+
+// MARK: - Une fenêtre d'aperçu
+
+@MainActor
+private final class PreviewWindow {
+
+    enum Style {
+        /// Verre dépoli de 160 pt, centré sur l'écran de la cible.
+        case hud
+        /// Feu de 22 pt, centré sur le curseur, sans fond.
+        case cursorLight
+
+        var size: CGSize {
+            switch self {
+            case .hud: CGSize(width: 160, height: 160)
+            // Le disque, plus la marge de l'ombre et du coin d'icône « quitter ».
+            case .cursorLight: CGSize(width: 44, height: 44)
+            }
+        }
+    }
+
+    static let cornerRadius: CGFloat = 32
+    static let lightDiameter: CGFloat = 22
+    static let appearDuration: TimeInterval = 0.12
+    static let disappearDuration: TimeInterval = 0.1
+    static let appearScale: CGFloat = 0.95
+
+    let style: Style
+    private var panel: NSPanel?
+    private let model = PreviewModel()
+    /// Incrémenté à chaque affichage : un fondu de disparition en retard ne
+    /// doit pas fermer le panneau d'un geste suivant.
+    private var generation = 0
+    private var isShown = false
+
+    init(style: Style) {
+        self.style = style
+    }
+
+    func show(
+        content: PreviewContent,
+        label: String,
+        appIcon: NSImage?,
+        targetFrame: CGRect?,
+        cursor: CGPoint
+    ) {
+        model.content = content
         model.appIcon = appIcon
-        model.label = preview.label(appName: appName)
+        model.label = label
 
         guard isShown == false else { return } // mise à jour : le fondu enchaîné est dans la vue
-        isShown = true
-        generation += 1
 
         let screens = NSScreen.screens
         guard let primaryHeight = screens.first?.frame.height else { return }
-        let frames = screens.map { ScreenGeometry.axRect(fromCocoa: $0.frame, primaryScreenHeight: primaryHeight) }
-        guard let index = PreviewPlacement.screenIndex(targetFrame: targetFrame, cursor: cursor, screens: frames) else { return }
 
-        model.screenAspect = frames[index].width / max(frames[index].height, 1)
-        let visible = ScreenGeometry.axRect(fromCocoa: screens[index].visibleFrame, primaryScreenHeight: primaryHeight)
-        let targetAX = PreviewPlacement.frame(size: size, centeredIn: visible)
+        let targetAX: CGRect
+        switch style {
+        case .hud:
+            let frames = screens.map { ScreenGeometry.axRect(fromCocoa: $0.frame, primaryScreenHeight: primaryHeight) }
+            guard let index = PreviewPlacement.screenIndex(targetFrame: targetFrame, cursor: cursor, screens: frames) else { return }
+            model.screenAspect = frames[index].width / max(frames[index].height, 1)
+            let visible = ScreenGeometry.axRect(fromCocoa: screens[index].visibleFrame, primaryScreenHeight: primaryHeight)
+            targetAX = PreviewPlacement.frame(size: style.size, centeredIn: visible)
+        case .cursorLight:
+            targetAX = CGRect(
+                x: cursor.x - style.size.width / 2,
+                y: cursor.y - style.size.height / 2,
+                width: style.size.width,
+                height: style.size.height
+            )
+        }
         let target = ScreenGeometry.cocoaRect(fromAX: targetAX, primaryScreenHeight: primaryHeight)
+
+        isShown = true
+        generation += 1
 
         let panel = self.panel ?? makePanel()
         self.panel = panel
 
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let start = reduceMotion ? target : target.insetBy(
-            dx: target.width * (1 - appearScale) / 2,
-            dy: target.height * (1 - appearScale) / 2
+            dx: target.width * (1 - Self.appearScale) / 2,
+            dy: target.height * (1 - Self.appearScale) / 2
         )
         panel.setFrame(start, display: false)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = appearDuration
+            context.duration = Self.appearDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
             if reduceMotion == false { panel.animator().setFrame(target, display: true) }
         }
     }
 
-    static func hide() {
+    func hide() {
         guard isShown, let panel else { return }
         isShown = false
         let hiding = generation
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = disappearDuration
+            context.duration = Self.disappearDuration
             panel.animator().alphaValue = 0
         }, completionHandler: {
             MainActor.assumeIsolated {
                 // Un nouveau geste a pu rouvrir le panneau pendant le fondu.
-                guard generation == hiding, isShown == false else { return }
+                guard self.generation == hiding, self.isShown == false else { return }
                 panel.orderOut(nil)
             }
         })
     }
 
-    // MARK: - Construction
+    // MARK: Construction
 
-    private static func makePanel() -> NSPanel {
+    private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: size),
+            contentRect: NSRect(origin: .zero, size: style.size),
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: true
@@ -116,31 +203,40 @@ enum GesturePreviewPanel {
         panel.ignoresMouseEvents = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
 
-        // Verre dépoli système : suit le mode clair/sombre et « Réduire la
-        // transparence » sans rien à gérer.
-        let background = NSVisualEffectView()
-        background.material = .hudWindow
-        background.blendingMode = .behindWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = cornerRadius
-        background.layer?.cornerCurve = .continuous
-        background.layer?.masksToBounds = true
-
-        let hosting = NSHostingView(rootView: PreviewView(model: model))
+        let hosting = NSHostingView(rootView: PreviewView(model: model, style: style))
         hosting.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(hosting)
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: background.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: background.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: background.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: background.bottomAnchor),
-        ])
-        panel.contentView = background
+
+        switch style {
+        case .hud:
+            panel.hasShadow = true
+            // Verre dépoli système : suit le mode clair/sombre et « Réduire la
+            // transparence » sans rien à gérer.
+            let background = NSVisualEffectView()
+            background.material = .hudWindow
+            background.blendingMode = .behindWindow
+            background.state = .active
+            background.wantsLayer = true
+            background.layer?.cornerRadius = Self.cornerRadius
+            background.layer?.cornerCurve = .continuous
+            background.layer?.masksToBounds = true
+            background.addSubview(hosting)
+            NSLayoutConstraint.activate([
+                hosting.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+                hosting.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+                hosting.topAnchor.constraint(equalTo: background.topAnchor),
+                hosting.bottomAnchor.constraint(equalTo: background.bottomAnchor),
+            ])
+            panel.contentView = background
+        case .cursorLight:
+            // Ni fond ni cadre : le disque seul, avec une ombre dessinée par
+            // la vue (l'ombre de fenêtre suivrait un contenu transparent de
+            // façon peu fiable).
+            panel.hasShadow = false
+            panel.contentView = hosting
+        }
         return panel
     }
 }
@@ -157,6 +253,7 @@ private final class PreviewModel: ObservableObject {
 
 private struct PreviewView: View {
     @ObservedObject var model: PreviewModel
+    let style: PreviewWindow.Style
 
     var body: some View {
         ZStack {
@@ -167,7 +264,7 @@ private struct PreviewView: View {
                 .transition(.opacity)
         }
         .animation(.easeInOut(duration: 0.1), value: model.label)
-        .frame(width: GesturePreviewPanel.size.width, height: GesturePreviewPanel.size.height)
+        .frame(width: style.size.width, height: style.size.height)
         .accessibilityElement()
         .accessibilityLabel(model.label)
     }
@@ -178,9 +275,21 @@ private struct PreviewView: View {
         case let .zone(unit):
             MiniScreen(zone: unit, aspect: model.screenAspect)
         case let .light(light):
-            TrafficLightView(light: light, diameter: 72)
+            switch style {
+            case .hud:
+                TrafficLightView(light: light, diameter: 72)
+            case .cursorLight:
+                TrafficLightView(light: light, diameter: PreviewWindow.lightDiameter)
+                    .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+            }
         case .quitApp:
-            QuitLightView(icon: model.appIcon)
+            switch style {
+            case .hud:
+                QuitLightView(icon: model.appIcon, diameter: 72, iconSize: 30)
+            case .cursorLight:
+                QuitLightView(icon: model.appIcon, diameter: PreviewWindow.lightDiameter, iconSize: 16)
+                    .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+            }
         case .unrecognized:
             Image(systemName: "questionmark")
                 .font(.system(size: 44, weight: .semibold))
@@ -189,22 +298,26 @@ private struct PreviewView: View {
     }
 }
 
-/// Le feu rouge, et l'icône de l'app en petit dans son coin bas droit.
+/// Le feu rouge, et l'icône de l'app en petit dans son coin bas droit. Le
+/// décalage de l'icône suit le diamètre, pour que les proportions tiennent
+/// à toutes les tailles.
 private struct QuitLightView: View {
     let icon: NSImage?
+    let diameter: CGFloat
+    let iconSize: CGFloat
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            TrafficLightView(light: .close, diameter: 72)
+            TrafficLightView(light: .close, diameter: diameter)
             if let icon {
                 Image(nsImage: icon)
                     .resizable()
-                    .frame(width: 30, height: 30)
+                    .frame(width: iconSize, height: iconSize)
                     .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
-                    .offset(x: 12, y: 10)
+                    .offset(x: diameter * 0.17, y: diameter * 0.14)
             }
         }
-        .frame(width: 72, height: 72)
+        .frame(width: diameter, height: diameter)
     }
 }
 

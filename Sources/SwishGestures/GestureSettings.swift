@@ -102,7 +102,7 @@ public final class GestureSettings: ObservableObject {
         // `object(forKey:) as? T ?? défaut` plutôt que `double(forKey:)` :
         // ce dernier renvoie 0 pour une clé absente, ce qui désactiverait
         // silencieusement tous les seuils au premier lancement.
-        swipeThreshold = defaults.object(forKey: Key.swipeThreshold) as? Double ?? 20
+        swipeThreshold = defaults.object(forKey: Key.swipeThreshold) as? Double ?? 16
         pinchThreshold = defaults.object(forKey: Key.pinchThreshold) as? Double ?? 0.1
         gestureZoneHeight = defaults.object(forKey: Key.gestureZoneHeight) as? Double ?? 40
         animationDuration = defaults.object(forKey: Key.animationDuration) as? Double ?? 0.2

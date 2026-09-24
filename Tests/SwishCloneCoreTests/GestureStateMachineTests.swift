@@ -493,3 +493,80 @@ final class GestureStateMachineTests: XCTestCase {
         XCTAssertEqual(driver.machine.nextDeadline!, driver.now + 0.3, accuracy: 1e-9)
     }
 }
+
+// MARK: - Enchaînement illimité, sans lever les doigts
+
+extension GestureStateMachineTests {
+
+    func testChangingYourMindAcrossThreeStepsLandsOnTheLatestQuarter() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dy: -40)              // ↑
+        driver.wait(0.35)
+        driver.move(dx: 40)               // →  : quart en haut à droite
+        driver.wait(0.35)
+        XCTAssertEqual(driver.previews.last, .action(.topRightQuarter))
+        driver.move(dy: 40)               // ↓  : on change d'avis
+        XCTAssertEqual(driver.previews.last, .action(.bottomRightQuarter))
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [.bottomRightQuarter])
+        XCTAssertEqual(driver.haptics, [.step, .step], "deux étapes validées, la troisième part au lever")
+    }
+
+    func testFourStepsKeepFollowingTheLatestOfEachAxis() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dx: -40)              // ←
+        driver.wait(0.35)
+        driver.move(dy: 40)               // ↓
+        driver.wait(0.35)
+        driver.move(dx: 40)               // →
+        driver.wait(0.35)
+        driver.move(dy: -40)              // ↑
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [.topRightQuarter])
+        XCTAssertEqual(driver.haptics, [.step, .step, .step])
+    }
+
+    func testInvertingTheHorizontalOnAQuarterFallsBackToAHalf() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dy: -40)              // ↑
+        driver.wait(0.35)
+        driver.move(dx: 40)               // →  : quart en haut à droite
+        driver.wait(0.35)
+        XCTAssertEqual(driver.previews.last, .action(.topRightQuarter))
+        driver.move(dx: -40)              // ←  : inversion, la verticale s'efface
+        XCTAssertEqual(driver.previews.last, .action(.leftHalf))
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [.leftHalf])
+    }
+
+    func testTwoConsecutiveDownStepsAfterAQuarterForceTheBottomHalf() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dx: -40)              // ←
+        driver.wait(0.35)
+        driver.move(dy: -40)              // ↑  : quart haut-gauche
+        driver.wait(0.35)
+        driver.move(dy: 40)               // ↓  : quart bas-gauche
+        driver.wait(0.35)
+        XCTAssertEqual(driver.previews.last, .action(.bottomLeftQuarter))
+        driver.move(dy: 40)               // ↓ encore : retour à la moitié basse
+        XCTAssertEqual(driver.previews.last, .action(.bottomHalf))
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [.bottomHalf])
+        XCTAssertEqual(driver.haptics, [.step, .step, .step])
+    }
+
+    func testChangingYourMindOnOneAxisIsPreviewedAsUnrecognizedAndDoesNothing() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dy: -40)              // ↑
+        driver.wait(0.35)
+        driver.move(dy: 40)               // ↓
+        XCTAssertEqual(driver.previews.last, .unrecognized)
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [])
+    }
+}
