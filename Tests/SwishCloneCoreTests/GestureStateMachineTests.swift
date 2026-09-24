@@ -8,7 +8,7 @@ private typealias Machine = GestureStateMachine
 private struct Driver {
     var machine: Machine
     var now: TimeInterval = 0
-    var onTarget = true
+    var onTarget: GestureTargetKind? = .titlebar
     private(set) var hitTests = 0
     private(set) var effects: [Machine.Effect] = []
     private(set) var dispositions: [Machine.Disposition] = []
@@ -20,7 +20,7 @@ private struct Driver {
         machine = Machine(configuration: configuration)
     }
 
-    var commits: [WindowAction] {
+    var commits: [GestureAction] {
         effects.compactMap { if case let .commit(action) = $0 { action } else { nil } }
     }
 
@@ -99,7 +99,7 @@ final class GestureStateMachineTests: XCTestCase {
     // MARK: - Un swipe, une action, au lever
 
     func testSimpleSwipesMapToTheirActions() {
-        let cases: [(dx: Double, dy: Double, action: WindowAction)] = [
+        let cases: [(dx: Double, dy: Double, action: GestureAction)] = [
             (-40, 0, .leftHalf),
             (40, 0, .rightHalf),
             (0, -40, .maximize), // dy < 0 = haut (convention scrollWheel)
@@ -315,7 +315,7 @@ final class GestureStateMachineTests: XCTestCase {
 
     func testOffTargetGesturePassesEntirely() {
         var driver = Driver()
-        driver.onTarget = false
+        driver.onTarget = nil
         driver.swipe(dx: 40)
         driver.momentum()
         XCTAssertEqual(Set(driver.dispositions), [.pass])
@@ -401,14 +401,14 @@ final class GestureStateMachineTests: XCTestCase {
 
     func testOffTargetPinchPassesAndIsCheckedOnce() {
         var driver = Driver()
-        driver.onTarget = false
+        driver.onTarget = nil
         driver.pinch(to: [0.05, 0.1, 0.15, 0.2])
         driver.wait(0.2)
         XCTAssertEqual(Set(driver.dispositions), [.pass])
         XCTAssertEqual(driver.hitTests, 1)
         XCTAssertEqual(driver.commits, [])
 
-        driver.onTarget = true
+        driver.onTarget = .titlebar
         driver.pinch(to: [0.05, 0.15]) // nouveau pincement : nouvelle vérification
         driver.wait(0.2)
         XCTAssertEqual(driver.hitTests, 2)
@@ -425,6 +425,43 @@ final class GestureStateMachineTests: XCTestCase {
         driver.pinch(to: [-0.15])
         driver.wait(0.2)
         XCTAssertEqual(driver.commits, [.toggleFullScreen, .close])
+    }
+
+    // MARK: - Icône du Dock
+
+    func testPinchInOnADockIconQuitsTheApp() {
+        var driver = Driver()
+        driver.onTarget = .dockApp
+        driver.pinch(to: [-0.03, -0.08, -0.14])
+        XCTAssertEqual(driver.previews.last, .action(.quitApp), "l'aperçu annonce « quitter » avant le lever")
+        driver.wait(0.2)
+        XCTAssertEqual(driver.commits, [.quitApp])
+    }
+
+    func testPinchOutOnADockIconDoesNothingYet() {
+        var driver = Driver()
+        driver.onTarget = .dockApp
+        driver.pinch(to: [0.05, 0.15])
+        XCTAssertEqual(driver.previews.last, .unrecognized)
+        driver.wait(0.2)
+        XCTAssertEqual(driver.commits, [])
+    }
+
+    func testSwipeOnADockIconIsLeftToTheDock() {
+        var driver = Driver(blocks: true)
+        driver.onTarget = .dockApp
+        driver.swipe(dx: 40)
+        driver.momentum()
+        XCTAssertEqual(driver.commits, [])
+        XCTAssertEqual(driver.effects, [], "ni aperçu ni retour haptique")
+        XCTAssertEqual(Set(driver.dispositions), [.pass], "jamais capturé, donc jamais avalé à l'étape 5")
+    }
+
+    func testTitlebarPinchInStillClosesTheWindow() {
+        var driver = Driver()
+        driver.pinch(to: [-0.05, -0.14])
+        driver.wait(0.2)
+        XCTAssertEqual(driver.commits, [.close], "la cible décide : fermer une fenêtre, pas quitter l'app")
     }
 
     // MARK: - Remise à zéro

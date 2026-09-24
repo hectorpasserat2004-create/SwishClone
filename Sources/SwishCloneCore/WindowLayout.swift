@@ -48,7 +48,7 @@ public enum WindowLayout {
 
     /// `nil` pour les actions qui ne sont pas un cadre (réduire, plein écran
     /// natif, fermer) : `WindowController` les traite à part.
-    public static func frame(for action: WindowAction, in visible: CGRect) -> CGRect? {
+    public static func frame(for action: GestureAction, in visible: CGRect) -> CGRect? {
         let halfWidth = visible.width / 2
         let halfHeight = visible.height / 2
         let left = visible.minX
@@ -84,7 +84,7 @@ public enum WindowLayout {
                 width: width,
                 height: height
             )
-        case .minimize, .toggleFullScreen, .close:
+        case .minimize, .toggleFullScreen, .close, .quitApp:
             return nil
         }
     }

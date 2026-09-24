@@ -228,7 +228,7 @@ enum GestureEventTap {
 
         let output = machine.handle(event, at: now) {
             target = GestureTarget.hitTest(at: location, zoneHeight: zoneHeight)
-            return target != nil
+            return target?.kind
         }
         apply(output.effects)
         synchronize()
@@ -238,7 +238,7 @@ enum GestureEventTap {
     private static func tick() {
         scheduledDeadline = nil
         deadlineTimer = nil
-        let output = machine.handle(.tick, at: now) { false }
+        let output = machine.handle(.tick, at: now) { nil }
         apply(output.effects)
         synchronize()
     }
@@ -247,9 +247,17 @@ enum GestureEventTap {
         for effect in effects {
             switch effect {
             case let .commit(action):
-                guard let target else { continue }
                 debugLog("lever : \(action)")
-                WindowController.perform(action, on: target.window)
+                switch (target, action) {
+                case let (.dockApp(pid, _), .quitApp):
+                    AppController.quit(pid: pid)
+                case (.window, .quitApp), (.dockApp, _), (nil, _):
+                    // Impossible par construction de la table : la cible et
+                    // l'action viennent du même type de cible.
+                    debugLog("action \(action) incohérente avec la cible — ignorée")
+                case let (.window(window, _), _):
+                    WindowController.perform(action, on: window)
+                }
             case let .showPreview(preview):
                 // Étape 4 : le panneau d'aperçu.
                 debugLog("aperçu : \(preview)")

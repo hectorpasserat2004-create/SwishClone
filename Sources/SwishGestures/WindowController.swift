@@ -231,7 +231,7 @@ public enum WindowController {
     /// (`visibleFrame` : sans la barre de menus ni le Dock). Avant, c'était
     /// `NSScreen.main` — l'écran de la fenêtre *active* — et son cadre entier
     /// posé en (0, 0) : faux dès qu'on vise une fenêtre sur un autre écran.
-    public static func perform(_ action: WindowAction, on window: AXUIElement) {
+    public static func perform(_ action: GestureAction, on window: AXUIElement) {
         guard isAccessibilityTrusted() else { return }
 
         if let lastActionDate, Date().timeIntervalSince(lastActionDate) < actionCooldown {
@@ -254,6 +254,10 @@ public enum WindowController {
 
         case .close:
             pressCloseButton(of: window)
+
+        case .quitApp:
+            // Une action d'app, pas de fenêtre : `AppController.quit`.
+            debugLog("quitApp reçu par WindowController — ignoré")
 
         default:
             guard let current = frame(of: window),
@@ -311,7 +315,7 @@ public enum WindowController {
             return
         }
 
-        let action: WindowAction?
+        let action: GestureAction?
         switch gesture {
         case let .swipe(direction, _): action = GestureSequence.resolve(swipes: [direction])
         case let .pinch(direction, _): action = GestureSequence.resolve(pinches: [direction])

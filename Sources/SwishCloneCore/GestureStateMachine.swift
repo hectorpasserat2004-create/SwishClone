@@ -21,7 +21,9 @@ import Foundation
 ///    geste, ↓ aurait déjà réduit la fenêtre.
 /// 2. **La cible est décidée une fois, au début du geste**, par `isOnTarget`
 ///    — l'hôte y fait son test d'accessibilité, coûteux, et on ne l'appelle
-///    qu'une fois par geste. Tout le geste, inertie comprise, est ensuite
+///    qu'une fois par geste. Son type (barre de titre, icône du Dock) choisit
+///    la table des actions ; un geste sans action sur ce type de cible n'est
+///    pas capturé. Tout le geste, inertie comprise, est ensuite
 ///    avalé ou laissé passer **d'un bloc** : une app qui recevrait la moitié
 ///    d'un scroll pourrait rester coincée au milieu.
 /// 3. **Les pauses ne produisent aucun événement** — des doigts immobiles
@@ -79,7 +81,7 @@ public struct GestureStateMachine: Sendable {
     }
 
     public enum Preview: Equatable, Sendable {
-        case action(WindowAction)
+        case action(GestureAction)
         /// Une séquence qui ne correspond à rien : le lever ne fera rien, et
         /// l'aperçu doit le dire plutôt que de disparaître.
         case unrecognized
@@ -101,7 +103,7 @@ public struct GestureStateMachine: Sendable {
         case showPreview(Preview)
         case hidePreview
         case haptic(Haptic)
-        case commit(WindowAction)
+        case commit(GestureAction)
         case cancelled(CancelReason)
     }
 
@@ -122,6 +124,7 @@ public struct GestureStateMachine: Sendable {
     // MARK: - État
 
     private struct SwipeTracking: Equatable, Sendable {
+        var kind: GestureTargetKind
         var steps: [SwipeDirection] = []
         var candidate: SwipeDirection?
         var accX: Double = 0
@@ -134,6 +137,7 @@ public struct GestureStateMachine: Sendable {
     }
 
     private struct PinchTracking: Equatable, Sendable {
+        var kind: GestureTargetKind
         var steps: [PinchDirection] = []
         var candidate: PinchDirection?
         var stepBase: Double = 0
@@ -206,11 +210,12 @@ public struct GestureStateMachine: Sendable {
 
     // MARK: - Entrée
 
-    /// `isOnTarget` n'est appelé qu'au début d'un geste — jamais pendant.
+    /// `isOnTarget` n'est appelé qu'au début d'un geste — jamais pendant. Il
+    /// rend le type de cible sous le curseur, ou `nil` s'il n'y en a pas.
     public mutating func handle(
         _ event: Event,
         at now: TimeInterval,
-        isOnTarget: () -> Bool
+        isOnTarget: () -> GestureTargetKind?
     ) -> Output {
         var effects: [Effect] = []
         let captured: Bool
@@ -241,7 +246,7 @@ public struct GestureStateMachine: Sendable {
         dx: Double,
         dy: Double,
         now: TimeInterval,
-        isOnTarget: () -> Bool,
+        isOnTarget: () -> GestureTargetKind?,
         effects: inout [Effect]
     ) -> Bool {
         // L'inertie qui suit un geste capturé est avalée elle aussi : sans ça,
@@ -266,11 +271,13 @@ public struct GestureStateMachine: Sendable {
             // Un nouveau geste. Ce qui restait d'un précédent (des phases
             // perdues) est abandonné sans action.
             show(nil, effects: &effects)
-            guard configuration.swipeEnabled, isOnTarget() else {
+            guard configuration.swipeEnabled,
+                  let kind = isOnTarget(),
+                  GestureSequence.accepts(.swipe, on: kind) else {
                 state = .idle
                 return false
             }
-            state = .swipe(SwipeTracking(lastMovementAt: now, hasBegun: phase == .began))
+            state = .swipe(SwipeTracking(kind: kind, lastMovementAt: now, hasBegun: phase == .began))
             return true
 
         case .changed:
@@ -278,7 +285,7 @@ public struct GestureStateMachine: Sendable {
             case var .swipe(t):
                 move(&t, dx: dx, dy: dy, now: now)
                 state = .swipe(t)
-                show(preview(swipes: t.steps + [t.candidate].compactMap { $0 }), effects: &effects)
+                show(preview(swipes: t.steps + [t.candidate].compactMap { $0 }, on: t.kind), effects: &effects)
                 return true
             case .swipeCancelled:
                 return true
@@ -291,7 +298,7 @@ public struct GestureStateMachine: Sendable {
             case let .swipe(t):
                 show(nil, effects: &effects)
                 let steps = t.steps + [t.candidate].compactMap { $0 }
-                if let action = GestureSequence.resolve(swipes: steps) {
+                if let action = GestureSequence.resolve(swipes: steps, on: t.kind) {
                     effects.append(.commit(action))
                 }
                 state = .swallowingMomentum
@@ -340,9 +347,9 @@ public struct GestureStateMachine: Sendable {
         return dy > 0 ? .down : .up
     }
 
-    private func preview(swipes steps: [SwipeDirection]) -> Preview? {
+    private func preview(swipes steps: [SwipeDirection], on kind: GestureTargetKind) -> Preview? {
         guard steps.isEmpty == false else { return nil }
-        return GestureSequence.resolve(swipes: steps).map(Preview.action) ?? .unrecognized
+        return GestureSequence.resolve(swipes: steps, on: kind).map(Preview.action) ?? .unrecognized
     }
 
     // MARK: - Pincement
@@ -351,7 +358,7 @@ public struct GestureStateMachine: Sendable {
         _ magnitude: Double,
         phase: Phase?,
         now: TimeInterval,
-        isOnTarget: () -> Bool,
+        isOnTarget: () -> GestureTargetKind?,
         effects: inout [Effect]
     ) -> Bool {
         // Un hôte qui n'a pas réveillé la machine à temps : le silence a déjà
@@ -377,7 +384,7 @@ public struct GestureStateMachine: Sendable {
             }
             move(&p, magnitude: magnitude, now: now)
             state = .pinch(p)
-            show(preview(pinches: p.steps + [p.candidate].compactMap { $0 }), effects: &effects)
+            show(preview(pinches: p.steps + [p.candidate].compactMap { $0 }, on: p.kind), effects: &effects)
             return true
 
         case let .pinchCancelled(_, usesPhase):
@@ -392,14 +399,16 @@ public struct GestureStateMachine: Sendable {
             // Début d'un pincement. Une fin isolée (phase perdue) ne démarre
             // rien.
             guard lifted == false else { return false }
-            guard configuration.pinchEnabled, isOnTarget() else {
+            guard configuration.pinchEnabled,
+                  let kind = isOnTarget(),
+                  GestureSequence.accepts(.pinch, on: kind) else {
                 state = .pinchPassThrough(lastEventAt: now, usesPhase: phase != nil)
                 return false
             }
-            var p = PinchTracking(lastMovementAt: now, lastEventAt: now, usesPhase: phase != nil)
+            var p = PinchTracking(kind: kind, lastMovementAt: now, lastEventAt: now, usesPhase: phase != nil)
             move(&p, magnitude: magnitude, now: now)
             state = .pinch(p)
-            show(preview(pinches: p.steps + [p.candidate].compactMap { $0 }), effects: &effects)
+            show(preview(pinches: p.steps + [p.candidate].compactMap { $0 }, on: p.kind), effects: &effects)
             return true
         }
     }
@@ -419,15 +428,15 @@ public struct GestureStateMachine: Sendable {
     private mutating func finishPinch(_ p: PinchTracking, effects: inout [Effect]) {
         show(nil, effects: &effects)
         let steps = p.steps + [p.candidate].compactMap { $0 }
-        if let action = GestureSequence.resolve(pinches: steps) {
+        if let action = GestureSequence.resolve(pinches: steps, on: p.kind) {
             effects.append(.commit(action))
         }
         state = .idle
     }
 
-    private func preview(pinches steps: [PinchDirection]) -> Preview? {
+    private func preview(pinches steps: [PinchDirection], on kind: GestureTargetKind) -> Preview? {
         guard steps.isEmpty == false else { return nil }
-        return GestureSequence.resolve(pinches: steps).map(Preview.action) ?? .unrecognized
+        return GestureSequence.resolve(pinches: steps, on: kind).map(Preview.action) ?? .unrecognized
     }
 
     /// L'échéance du silence de fin de pincement, pour les états qui en ont
@@ -474,7 +483,7 @@ public struct GestureStateMachine: Sendable {
                 t.accY = 0
                 state = .swipe(t)
                 effects.append(.haptic(.step))
-                show(preview(swipes: t.steps), effects: &effects)
+                show(preview(swipes: t.steps, on: t.kind), effects: &effects)
             }
 
         case var .pinch(p):
@@ -495,7 +504,7 @@ public struct GestureStateMachine: Sendable {
                 p.stepPeak = 0
                 state = .pinch(p)
                 effects.append(.haptic(.step))
-                show(preview(pinches: p.steps), effects: &effects)
+                show(preview(pinches: p.steps, on: p.kind), effects: &effects)
             }
 
         case let .pinchCancelled(lastEventAt, false), let .pinchPassThrough(lastEventAt, false):

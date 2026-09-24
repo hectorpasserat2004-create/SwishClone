@@ -67,7 +67,7 @@ final class WindowLayoutTests: XCTestCase {
     /// La zone utile de l'écran principal ci-dessus, en coordonnées AX.
     private let visible = CGRect(x: 0, y: 25, width: 1440, height: 805)
 
-    private func frame(_ action: WindowAction, in rect: CGRect? = nil) -> CGRect? {
+    private func frame(_ action: GestureAction, in rect: CGRect? = nil) -> CGRect? {
         WindowLayout.frame(for: action, in: rect ?? visible)
     }
 
@@ -106,7 +106,7 @@ final class WindowLayoutTests: XCTestCase {
     }
 
     func testEveryFrameStaysInsideTheUsableArea() {
-        let actions: [WindowAction] = [
+        let actions: [GestureAction] = [
             .leftHalf, .rightHalf, .topHalf, .bottomHalf,
             .topLeftQuarter, .topRightQuarter, .bottomLeftQuarter, .bottomRightQuarter,
             .maximize, .centerReduced,

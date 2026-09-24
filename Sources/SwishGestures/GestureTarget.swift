@@ -4,7 +4,14 @@ import AppKit
 @preconcurrency import ApplicationServices
 import SwishCloneCore
 
-/// **La fenêtre sous le curseur**, si le curseur est sur sa barre de titre.
+/// **Ce qui est sous le curseur au début d'un geste** : la barre de titre
+/// d'une fenêtre, ou l'icône d'une app lancée dans le Dock.
+///
+/// ```
+///   élément AX sous le curseur
+///      ├─ appartient au Dock ──▶ icône d'app ? lancée ? pas nous ? ──▶ DockHitTest
+///      └─ sinon ──▶ remontée jusqu'à la fenêtre ──▶ TitlebarHitTest
+/// ```
 ///
 /// Remplace `GestureZone`, qui regardait la fenêtre *au premier plan* et
 /// vérifiait *à la fin* du geste que le curseur était dans sa bande du haut.
@@ -18,12 +25,22 @@ import SwishCloneCore
 /// défaut).
 public enum GestureTarget {
 
-    public struct Target: @unchecked Sendable {
-        public let window: AXUIElement
-        public let pid: pid_t
-        /// En coordonnées AX.
-        public let frame: CGRect
+    public enum Target: @unchecked Sendable {
+        /// `frame` en coordonnées AX.
+        case window(AXUIElement, frame: CGRect)
+        /// L'app d'une icône du Dock. Le nom sert à l'aperçu (« Quitter
+        /// TextEdit »).
+        case dockApp(pid: pid_t, name: String)
+
+        public var kind: GestureTargetKind {
+            switch self {
+            case .window: return .titlebar
+            case .dockApp: return .dockApp
+            }
+        }
     }
+
+    static let dockBundleIdentifier = "com.apple.dock"
 
     /// Délai maximal d'une réponse AX. **Il est global** : AX l'applique à
     /// tous les éléments dès qu'on le pose sur l'élément système. Sans lui,
@@ -57,6 +74,12 @@ public enum GestureTarget {
         guard AXUIElementGetPid(hit, &pid) == .success,
               pid != ProcessInfo.processInfo.processIdentifier else { return nil }
 
+        // Le pid du Dock est relu à chaque geste plutôt que gardé : il change
+        // quand le Dock redémarre, et la lecture ne coûte presque rien.
+        if NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == dockBundleIdentifier {
+            return dockTarget(from: hit)
+        }
+
         var path: [AXNodeInfo] = []
         var current = hit
         for _ in 0 ..< maxDepth {
@@ -74,7 +97,7 @@ public enum GestureTarget {
                     debugLog("pas de cible : \(verdict) (chemin \(path.compactMap(\.role)))")
                     return nil
                 }
-                return Target(window: current, pid: pid, frame: frame)
+                return .window(current, frame: frame)
             }
             path.append(info)
             guard let parent = element(current, kAXParentAttribute) else { return nil }
@@ -82,6 +105,66 @@ public enum GestureTarget {
         }
         return nil
     }
+
+    // MARK: - Dock
+
+    /// L'icône touchée, ou son parent proche : selon la version de macOS,
+    /// l'élément renvoyé peut être un enfant de l'icône.
+    private static let dockItemSearchDepth = 3
+
+    private static func dockTarget(from hit: AXUIElement) -> Target? {
+        var current = hit
+        for _ in 0 ..< dockItemSearchDepth {
+            let info = nodeInfo(current)
+            if info.role == "AXDockItem" {
+                return dockTarget(item: current, info: info)
+            }
+            guard let parent = element(current, kAXParentAttribute) else { break }
+            current = parent
+        }
+        debugLog("Dock : pas d'icône sous le curseur")
+        return nil
+    }
+
+    private static func dockTarget(item: AXUIElement, info: AXNodeInfo) -> Target? {
+        let url = self.url(item, kAXURLAttribute)
+        let isRunning = bool(item, "AXIsApplicationRunning") ?? false
+        let runningApps = NSWorkspace.shared.runningApplications.map {
+            RunningAppInfo(pid: $0.processIdentifier, bundleURL: $0.bundleURL, bundleIdentifier: $0.bundleIdentifier)
+        }
+
+        let verdict = DockHitTest.evaluate(
+            item: info,
+            isRunning: isRunning,
+            itemURL: url,
+            itemBundleIdentifier: url.flatMap { Bundle(url: $0)?.bundleIdentifier },
+            runningApps: runningApps,
+            ownPID: ProcessInfo.processInfo.processIdentifier
+        )
+        guard case let .app(app) = verdict else {
+            debugLog("Dock : pas de cible : \(verdict) (\(string(item, kAXTitleAttribute) ?? "sans titre"), \(url?.path ?? "sans URL"))")
+            return nil
+        }
+        let name = NSRunningApplication(processIdentifier: app.pid)?.localizedName
+            ?? string(item, kAXTitleAttribute)
+            ?? "l'app"
+        debugLog("Dock : cible \(name) (pid \(app.pid))")
+        return .dockApp(pid: app.pid, name: name)
+    }
+
+    private static func url(_ element: AXUIElement, _ attribute: String) -> URL? {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        return value as? URL
+    }
+
+    private static func bool(_ element: AXUIElement, _ attribute: String) -> Bool? {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        return (value as? NSNumber)?.boolValue
+    }
+
+    // MARK: - Attributs
 
     private static func nodeInfo(_ element: AXUIElement) -> AXNodeInfo {
         AXNodeInfo(
