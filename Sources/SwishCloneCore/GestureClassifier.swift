@@ -5,7 +5,7 @@ public enum GestureClassifier {
     /// Active les logs de diagnostic ajoutés pendant la mise au point de la
     /// détection de gestes (session de touches, pinch). Verbeux — à ne
     /// réactiver que ponctuellement en cas de régression.
-    public static let debugLoggingEnabled = true
+    public static let debugLoggingEnabled = false
 
     /// En dessous de cette distance (coordonnées normalisées 0...1),
     /// le déplacement du centre est considéré comme un tap plutôt qu'un swipe.
