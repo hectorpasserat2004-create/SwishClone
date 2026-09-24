@@ -47,6 +47,17 @@ résultats sont alors faux et trompeurs — enchaînements qui semblent
 qui n'a plus d'effet. Quitter bran (ou éteindre ses gestes dans ses
 réglages) avant chaque session de test, et inversement.
 
+**Garde-fou au démarrage.** `GestureMonitor.start()` prend un verrou
+(`flock` sur un fichier du dossier temporaire de l'utilisateur, libéré par
+le système à la mort du processus) et lance `StartError.anotherHostRunning`
+si un autre hôte le tient déjà : l'app de test affiche alors une alerte qui
+nomme le détenteur. Avec le tap actif (étape 5b), deux hôtes avaleraient les
+mêmes événements — c'est pire qu'un doublon de détection, d'où le refus
+plutôt qu'un simple avertissement. Un hôte qui embarque `SwishGestures` doit
+traiter ce cas dans son `catch`. La garde ne voit que les processus de la
+même session et du même dossier temporaire : un hôte sous bac à sable
+(container à part) ne la déclencherait pas.
+
 ## Prérequis
 - Xcode Command Line Tools installés (`xcode-select --install`)
 - Pas besoin de l'app Xcode complète
@@ -96,6 +107,19 @@ diagnostiquer plusieurs bugs de calibration et de tracking de session.
 Ils sont désactivés par défaut mais gardés dans le code, dernière
 `GestureClassifier.debugLoggingEnabled` : passer cette constante à `true`
 et recompiler les réactive dans les deux modules.
+
+**Latence du tap** (`SWISHCLONE_TRACE=1`). Le tap tourne sur son propre
+thread et chronomètre chaque callback par étape (décodage, machine, test de
+cible, envoi, `tapEnable`, timer, diagnostics). Rien ne s'imprime en usage
+normal, sauf une ligne de bilan à la fermeture par le menu. Avec la variable
+d'environnement, on obtient en plus le détail de tout callback de plus de
+5 ms, les tests de cible lents et le pire de chaque étape :
+`SWISHCLONE_TRACE=1 swift run`. Ordres de grandeur mesurés : le premier
+`NSEvent(cgEvent:)` d'une session coûte ~8 ms, un test de cible AX 30 à 70 ms
+à froid sur une app jamais touchée depuis un moment (sans conséquence en
+écoute seule, mais c'est ce qui retiendrait le défilement si le tap devenait
+actif), et `CGEvent.tapEnable` peut dépasser 10 ms sous charge — d'où
+l'absence d'appel dans le callback.
 
 ## Accorder la permission Accessibility
 1. `swift run`.

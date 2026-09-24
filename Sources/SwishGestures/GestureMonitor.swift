@@ -13,11 +13,11 @@ import SwishCloneCore
 /// l'hôte de décider quand montrer la fenêtre du système (voir
 /// `WindowController.requestAccessibilityPermission()`).
 ///
-/// **Un seul hôte à la fois sur une même session.** Rien n'empêche deux
-/// processus (l'app SwishClone et bran) de démarrer chacun leur détection :
-/// les deux suivent alors le même geste et agissent sur la même fenêtre.
-/// Pour les tests manuels, ne jamais les faire tourner ensemble — voir le
-/// README.
+/// **Un seul hôte à la fois sur une même session.** `start()` refuse
+/// (`StartError.anotherHostRunning`) quand un autre processus — l'app
+/// SwishClone, bran — tient déjà la détection : deux hôtes suivraient le même
+/// geste et agiraient chacun sur la même fenêtre, et avec le tap actif ils
+/// avaleraient les mêmes événements. Voir `HostLock` et le README.
 @MainActor
 public enum GestureMonitor {
 
@@ -28,7 +28,14 @@ public enum GestureMonitor {
         /// accordée — le plus souvent la permission « Contrôle de
         /// l'entrée » (Input Monitoring). Le détail est dans la console.
         case eventTapUnavailable
+        /// Un autre processus (bran, ou l'app de test SwishClone) tient déjà
+        /// la détection : deux hôtes suivraient le même geste et agiraient
+        /// chacun sur la même fenêtre. `processID` et `name` désignent le
+        /// détenteur quand il a pu être lu.
+        case anotherHostRunning(processID: Int32?, name: String?)
     }
+
+    private static let hostLock = HostLock()
 
     public private(set) static var isRunning = false
 
@@ -40,7 +47,14 @@ public enum GestureMonitor {
             throw StartError.accessibilityNotTrusted
         }
 
+        do {
+            try hostLock.acquire()
+        } catch HostLock.Failure.heldElsewhere(let holder) {
+            throw StartError.anotherHostRunning(processID: holder.processID, name: holder.name)
+        }
+
         guard GestureEventTap.start() else {
+            hostLock.release()
             throw StartError.eventTapUnavailable
         }
         isRunning = true
@@ -49,6 +63,7 @@ public enum GestureMonitor {
     public static func stop() {
         guard isRunning else { return }
         GestureEventTap.stop()
+        hostLock.release()
         isRunning = false
     }
 }

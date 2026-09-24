@@ -45,6 +45,14 @@ let package = Package(
             name: "SwishCloneCoreTests",
             dependencies: ["SwishCloneCore"],
             path: "Tests/SwishCloneCoreTests"
+        ),
+
+        // Le thread du tap, son moteur et le pont vers le thread principal :
+        // tout ce qui se teste sans permission ni tap réel.
+        .testTarget(
+            name: "SwishGesturesTests",
+            dependencies: ["SwishGestures", "SwishCloneCore"],
+            path: "Tests/SwishGesturesTests"
         )
     ]
 )

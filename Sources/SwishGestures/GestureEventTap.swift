@@ -1,34 +1,65 @@
+import Combine
 import Cocoa
 import CoreGraphics
 import SwishCloneCore
 
-/// **Un seul event tap pour le swipe et le pincement, branché sur
-/// `GestureStateMachine`.**
+/// **Un seul event tap pour le swipe et le pincement, sur un thread à lui,
+/// branché sur `GestureStateMachine`.**
 ///
 /// ```
-///   tap (scrollWheel + type 29) ──▶ Event ──▶ machine.handle ──▶ effets ──▶ WindowController.perform
-///                                              │
-///   timer à machine.nextDeadline ──▶ .tick ────┤
-///   tap clavier (Échap, actif pendant un geste) ──▶ .escape
+///  thread du tap (GestureTapRunner)                          thread principal
+///  ───────────────────────────────                          ────────────────
+///  tap (scrollWheel + type 29) ─▶ Event ─▶ GestureTapEngine ─▶ Delivery ─▶ file FIFO ─▶ aperçu, haptique,
+///  timer à nextDeadline ────────▶ .tick ──┘        │                                    action sur la fenêtre
+///  tap clavier (Échap, actif pendant un geste) ────┘
+///           ▲ réglages : copie verrouillée (TapSettingsStore), republiée par le thread principal
 /// ```
-///
-/// Remplace les deux moniteurs de la Phase 5 : `GlobalGestureMonitor`
-/// (`NSEvent`, swipe) et `EventTapGestureMonitor` (tap, pincement). Réunis,
-/// ils passent par la même machine — déclenchement au lever, enchaînement,
-/// annulation — et, à l'étape 5, par le même tap actif, puisqu'un moniteur
-/// `NSEvent` ne peut rien bloquer.
 ///
 /// **En écoute seule pour l'instant** (`.listenOnly`) : rien n'est avalé,
 /// quoi que dise la machine. Le callback renvoie déjà sa décision, pour que
-/// l'étape 5 n'ait qu'à changer l'option du tap.
-///
-/// Sur le thread principal, comme avant. L'étape 5 le déplacera sur un
-/// thread à lui avant d'activer le blocage : en écoute seule, une latence
-/// ici ne retarde que nous.
+/// l'étape 5b n'ait qu'à changer l'option du tap.
 @MainActor
 enum GestureEventTap {
 
-    // MARK: - Décodage du type 29 (Phase 5)
+    private static var runner: GestureTapRunner?
+    private static var settingsSubscription: AnyCancellable?
+
+    /// `false` si l'un des deux taps n'a pas pu être créé. La permission
+    /// Accessibility est vérifiée en amont par `GestureMonitor.start()`.
+    static func start() -> Bool {
+        let store = TapSettingsStore(GestureSettings.shared.tapSettings)
+        let runner = GestureTapRunner(settings: store)
+        guard runner.start() else { return false }
+
+        self.runner = runner
+        // `objectWillChange` part AVANT le changement : la relecture est
+        // repoussée d'un tour de la file principale, pour voir la nouvelle
+        // valeur.
+        settingsSubscription = GestureSettings.shared.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { _ in store.write(GestureSettings.shared.tapSettings) }
+        return true
+    }
+
+    static func stop() {
+        settingsSubscription = nil
+        runner?.stop()
+        runner = nil
+        // Après les livraisons déjà en file (FIFO) : sinon un aperçu en
+        // attente s'afficherait après l'arrêt.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { GesturePreviewPanel.hide() }
+        }
+    }
+}
+
+// MARK: - Le thread du tap
+
+/// Tout ce qui suit s'exécute sur le thread du tap, sauf `start()` et
+/// `stop()`, qui l'appellent depuis le thread principal.
+final class GestureTapRunner: @unchecked Sendable {
+
+    // MARK: Décodage du type 29 (Phase 5)
     //
     // ⚠️ **Technique non documentée officiellement par Apple**, décodée
     // empiriquement en Phase 5 à partir de gestes isolés et annoncés :
@@ -43,40 +74,80 @@ enum GestureEventTap {
     //
     // Rien de tout ça n'est garanti stable d'une version de macOS à l'autre.
 
-    /// `nonisolated` : lu depuis les callbacks C, hors de l'acteur.
-    nonisolated fileprivate static let gestureEventTypeRawValue: UInt32 = 29
+    fileprivate static let gestureEventTypeRawValue: UInt32 = 29
     private static let subtypeFieldRawValue: UInt32 = 110
     private static let magnifySubtype: Int64 = 8
     private static let magnitudeFieldRawValue: UInt32 = 113
-    nonisolated fileprivate static let escapeKeyCode: Int64 = 53
+    private static let escapeKeyCode: Int64 = 53
 
-    // MARK: - État
+    /// Au-delà, un callback se remarque : une fois le tap actif, il
+    /// retiendrait le défilement du système d'autant.
+    private static let slowCallbackNanoseconds: UInt64 = 5_000_000
 
-    private static var machine = GestureStateMachine()
-    /// La fenêtre visée par le geste en cours, trouvée par `isOnTarget` au
-    /// début du geste et utilisée au lever.
-    private static var target: GestureTarget.Target?
-    /// Le curseur au début du geste : son écran accueille l'aperçu quand la
-    /// cible n'est pas une fenêtre (icône du Dock).
-    private static var origin: CGPoint = .zero
+    /// Les diagnostics de latence — callback lent et son détail par étape,
+    /// test de cible lent, bilan par étape à l'arrêt — ne s'impriment que
+    /// sur demande : `SWISHCLONE_TRACE=1 swift run`. En usage normal, un
+    /// test de cible à froid (30 à 70 ms sur une app jamais touchée depuis
+    /// un moment) est sans conséquence en écoute seule et ne mérite pas la
+    /// console. Ce qui est anormal (tap coupé par macOS) s'imprime toujours.
+    /// Lu une fois : la mesure elle-même (quelques dizaines de ns par
+    /// étape) reste toujours active, seule son impression est conditionnée.
+    static let traceEnabled = ProcessInfo.processInfo.environment["SWISHCLONE_TRACE"] == "1"
 
-    private static var deadlineTimer: Timer?
-    private static var scheduledDeadline: TimeInterval?
+    private let loop = EventLoopThread(name: "SwishClone.gesture-tap")
+    private let engine: GestureTapEngine
 
-    private static var gestureTap: CFMachPort?
-    private static var gestureSource: CFRunLoopSource?
-    private static var keyTap: CFMachPort?
-    private static var keySource: CFRunLoopSource?
+    // Touchés uniquement depuis le thread du tap.
+    private var gestureTap: CFMachPort?
+    private var gestureSource: CFRunLoopSource?
+    private var keyTap: CFMachPort?
+    private var keySource: CFRunLoopSource?
+    private var deadlineTimer: Timer?
+    private var scheduledDeadline: TimeInterval?
+    private var metrics = CallbackMetrics()
+    private let trace = TraceRecorder()
 
-    private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    /// Où l'on en est du tap clavier, pour ne l'allumer et l'éteindre qu'aux
+    /// changements d'état.
+    private var keySwitch = KeyTapSwitch()
+    /// `CGEvent.tapEnable` est un aller-retour vers le serveur de fenêtres :
+    /// mesuré hors app sous charge, allumer un tap dépasse 1 ms dans ~1 % des
+    /// appels et atteint 10 ms — l'ordre de grandeur des 7 à 15 ms relevés en
+    /// usage. On ne le fait donc jamais DANS le callback : cette file, à
+    /// elle, porte l'appel. Sérielle, donc dans l'ordre.
+    private let tapControlQueue = DispatchQueue(label: "SwishClone.gesture-tap.control", qos: .userInteractive)
 
-    // MARK: - Démarrage
+    init(settings: TapSettingsStore) {
+        let trace = trace
+        engine = GestureTapEngine(
+            settings: settings,
+            now: { ProcessInfo.processInfo.systemUptime },
+            hitTest: { GestureTarget.hitTest(at: $0, zoneHeight: $1) },
+            deliver: MainDelivery.send,
+            log: { if Self.traceEnabled { print("[GestureEventTap] \($0)") } },
+            probe: { trace.add($0, nanoseconds: $1) }
+        )
+    }
 
-    /// `false` si l'un des deux taps n'a pas pu être créé. La permission
-    /// Accessibility est vérifiée en amont par `GestureMonitor.start()`.
-    static func start() -> Bool {
+    // MARK: Démarrage et arrêt
+
+    func start() -> Bool {
+        let started = loop.start { [self] in installTaps() }
+        if started {
+            print("[GestureEventTap] tap démarré (écoute seule, thread dédié) — swipe et pincement, action au lever")
+        }
+        return started
+    }
+
+    func stop() {
+        loop.stop { [self] in tearDown() }
+        print("[GestureEventTap] arrêté — \(metrics.summary)")
+        if Self.traceEnabled { print("[GestureEventTap] par étape — \(trace.summary)") }
+    }
+
+    private func installTaps() -> Bool {
         let gestureMask = (CGEventMask(1) << CGEventType.scrollWheel.rawValue)
-            | (CGEventMask(1) << CGEventMask(gestureEventTypeRawValue))
+            | (CGEventMask(1) << CGEventMask(Self.gestureEventTypeRawValue))
 
         guard let tap = createTap(mask: gestureMask, callback: gestureTapCallback) else {
             print("""
@@ -111,24 +182,22 @@ enum GestureEventTap {
         keySource = install(key)
         CGEvent.tapEnable(tap: tap, enable: true)
         CGEvent.tapEnable(tap: key, enable: false)
-
-        machine = GestureStateMachine(configuration: GestureSettings.shared.machineConfiguration)
-        target = nil
-        print("[GestureEventTap] tap démarré (écoute seule) — swipe et pincement, action au lever")
         return true
     }
 
-    static func stop() {
+    private func tearDown() {
+        // Les appels de tap déjà en file passent avant qu'on défasse les taps :
+        // sinon l'un d'eux rallumerait un tap qu'on vient d'éteindre.
+        tapControlQueue.sync {}
+        keySwitch = KeyTapSwitch()
         deadlineTimer?.invalidate()
         deadlineTimer = nil
         scheduledDeadline = nil
-        _ = machine.reset()
-        target = nil
-        GesturePreviewPanel.hide()
+        engine.reset()
 
         for (tap, source) in [(gestureTap, gestureSource), (keyTap, keySource)] {
             if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
-            if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+            if let source { CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes) }
         }
         gestureTap = nil
         gestureSource = nil
@@ -136,170 +205,117 @@ enum GestureEventTap {
         keySource = nil
     }
 
-    private static func createTap(mask: CGEventMask, callback: CGEventTapCallBack) -> CFMachPort? {
+    private func createTap(mask: CGEventMask, callback: CGEventTapCallBack) -> CFMachPort? {
         CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .listenOnly,
             eventsOfInterest: mask,
             callback: callback,
-            userInfo: nil
+            // Le callback C retrouve ainsi son runner sans état global.
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
         )
     }
 
-    private static func install(_ tap: CFMachPort) -> CFRunLoopSource? {
+    private func install(_ tap: CFMachPort) -> CFRunLoopSource? {
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else { return nil }
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         return source
     }
 
-    // MARK: - Événements
+    // MARK: Événements
 
     /// Rend la décision de la machine : avaler ou laisser passer. Ignorée
     /// tant que le tap est en écoute seule.
-    fileprivate static func handle(type: CGEventType, event: CGEvent) -> GestureStateMachine.Disposition {
+    fileprivate func handleGesture(type: CGEventType, event: CGEvent) -> GestureStateMachine.Disposition {
+        let kind: String
+        switch type {
+        case .scrollWheel: kind = "scroll"
+        case .tapDisabledByTimeout, .tapDisabledByUserInput: kind = "tap coupé"
+        default: kind = "type \(type.rawValue)"
+        }
+        return traced(kind) { handleGestureBody(type: type, event: event) }
+    }
+
+    private func handleGestureBody(type: CGEventType, event: CGEvent) -> GestureStateMachine.Disposition {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             recoverFromDisabledTap(type)
             return .pass
 
         case .scrollWheel:
-            guard let scroll = NSEvent(cgEvent: event) else { return .pass }
-            return process(
-                .scroll(
-                    phase: phase(scroll.phase),
-                    momentum: phase(scroll.momentumPhase),
-                    dx: Double(scroll.deltaX),
-                    dy: Double(scroll.deltaY)
-                ),
-                at: event.location
-            )
+            let decoded: GestureStateMachine.Event? = timed(.decode) {
+                NSEvent(cgEvent: event).map { scroll in
+                    .scroll(
+                        phase: Self.phase(scroll.phase),
+                        momentum: Self.phase(scroll.momentumPhase),
+                        dx: Double(scroll.deltaX),
+                        dy: Double(scroll.deltaY)
+                    )
+                }
+            }
+            guard let decoded else { return .pass }
+            return process(decoded, at: event.location)
 
         default:
-            guard type.rawValue == gestureEventTypeRawValue else { return .pass }
+            guard type.rawValue == Self.gestureEventTypeRawValue else { return .pass }
             return handleGestureEvent(event)
         }
     }
 
-    private static func handleGestureEvent(_ event: CGEvent) -> GestureStateMachine.Disposition {
-        let subtypeField = unsafeBitCast(subtypeFieldRawValue, to: CGEventField.self)
-        guard event.getIntegerValueField(subtypeField) == magnifySubtype else { return .pass }
+    private func handleGestureEvent(_ event: CGEvent) -> GestureStateMachine.Disposition {
+        let subtypeField = unsafeBitCast(Self.subtypeFieldRawValue, to: CGEventField.self)
+        let isMagnify = timed(.decode) { event.getIntegerValueField(subtypeField) == Self.magnifySubtype }
+        guard isMagnify else { return .pass }
 
-        let magnitudeField = unsafeBitCast(magnitudeFieldRawValue, to: CGEventField.self)
-
-        // DEBUG TEMPORAIRE : magnitude toujours à 0.0 en aval de la
-        // classification. On compare ici les deux lectures possibles du
-        // même champ, event par event, pour savoir laquelle est en cause
-        // AVANT le stockage — plutôt que de deviner.
-        let rawInt = event.getIntegerValueField(magnitudeField)
-        let bitcastFloat = Float(bitPattern: UInt32(truncatingIfNeeded: rawInt))
-        let viaDoubleField = event.getDoubleValueField(magnitudeField)
-        print("[GestureEventTap] magnify event : rawInt=\(rawInt) "
-            + "bitcastFloat32=\(bitcastFloat) getDoubleValueField=\(viaDoubleField)")
+        let magnitudeField = unsafeBitCast(Self.magnitudeFieldRawValue, to: CGEventField.self)
+        let magnitude = timed(.decode) { event.getDoubleValueField(magnitudeField) }
 
         // Diagnostic pour le P1 (pincer deux fois) : la machine ne peut
         // enchaîner des étapes de pincement que si l'événement porte une
         // phase. On relève ce que `NSEvent` en dit, sans encore s'en servir
         // — la fin du pincement reste détectée par le silence de 150 ms.
-        if GestureClassifier.debugLoggingEnabled, let ns = NSEvent(cgEvent: event) {
-            print("[GestureEventTap] magnify NSEvent : type=\(ns.type.rawValue) phase=\(ns.phase.rawValue)")
+        timed(.diagnostics) {
+            if GestureClassifier.debugLoggingEnabled, let ns = NSEvent(cgEvent: event) {
+                print("[GestureEventTap] magnify NSEvent : type=\(ns.type.rawValue) phase=\(ns.phase.rawValue)")
+            }
         }
 
-        return process(.magnify(cumulative: viaDoubleField, phase: nil), at: event.location)
+        return process(.magnify(cumulative: magnitude, phase: nil), at: event.location)
     }
 
-    fileprivate static func handleKey(type: CGEventType, event: CGEvent) {
+    fileprivate func handleKey(type: CGEventType, event: CGEvent) {
+        traced("clavier") { handleKeyBody(type: type, event: event) }
+    }
+
+    private func handleKeyBody(type: CGEventType, event: CGEvent) {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             // Le tap clavier est éteint hors geste : on ne le rallume que si
             // un geste est en cours.
-            if let keyTap, machine.isTracking { CGEvent.tapEnable(tap: keyTap, enable: true) }
+            if let keyTap, engine.isTracking { CGEvent.tapEnable(tap: keyTap, enable: true) }
         case .keyDown:
-            guard event.getIntegerValueField(.keyboardEventKeycode) == escapeKeyCode else { return }
+            guard event.getIntegerValueField(.keyboardEventKeycode) == Self.escapeKeyCode else { return }
             _ = process(.escape, at: event.location)
         default:
             break
         }
     }
 
-    // MARK: - La machine
+    // MARK: La machine et le temps
 
-    private static func process(_ event: GestureStateMachine.Event, at location: CGPoint) -> GestureStateMachine.Disposition {
-        // Relus à chaque événement, comme avant : un curseur déplacé dans les
-        // préférences s'applique au geste suivant.
-        machine.configuration = GestureSettings.shared.machineConfiguration
-        let zoneHeight = GestureSettings.shared.gestureZoneHeight
-
-        let output = machine.handle(event, at: now) {
-            target = GestureTarget.hitTest(at: location, zoneHeight: zoneHeight)
-            origin = location
-            return target?.kind
-        }
-        apply(output.effects)
+    private func process(_ event: GestureStateMachine.Event, at location: CGPoint) -> GestureStateMachine.Disposition {
+        let disposition = timed(.engine) { engine.process(event, at: location) }
         synchronize()
-        return output.disposition
+        return disposition
     }
 
-    private static func tick() {
-        scheduledDeadline = nil
-        deadlineTimer = nil
-        let output = machine.handle(.tick, at: now) { nil }
-        apply(output.effects)
-        synchronize()
-    }
-
-    private static func apply(_ effects: [GestureStateMachine.Effect]) {
-        for effect in effects {
-            switch effect {
-            case let .commit(action):
-                debugLog("lever : \(action)")
-                switch (target, action) {
-                case let (.dockApp(pid, _), .quitApp):
-                    AppController.quit(pid: pid)
-                case (.window, .quitApp), (.dockApp, _), (nil, _):
-                    // Impossible par construction de la table : la cible et
-                    // l'action viennent du même type de cible.
-                    debugLog("action \(action) incohérente avec la cible — ignorée")
-                case let (.window(window, _), _):
-                    WindowController.perform(action, on: window)
-                }
-            case let .showPreview(preview):
-                guard GestureSettings.shared.previewEnabled else { continue }
-                var appName: String?
-                var appIcon: NSImage?
-                var targetFrame: CGRect?
-                switch target {
-                case let .dockApp(pid, name):
-                    appName = name
-                    appIcon = NSRunningApplication(processIdentifier: pid)?.icon
-                case let .window(_, frame):
-                    targetFrame = frame
-                case nil:
-                    break
-                }
-                GesturePreviewPanel.show(
-                    preview,
-                    targetFrame: targetFrame,
-                    cursor: origin,
-                    appName: appName,
-                    appIcon: appIcon
-                )
-            case .hidePreview:
-                GesturePreviewPanel.hide()
-            case let .haptic(haptic):
-                // Gardé dans le log le temps de vérifier, au toucher, que le
-                // retour arrive bien quand le log le dit.
-                debugLog("haptique : \(haptic)")
-                guard GestureSettings.shared.hapticsEnabled else { continue }
-                let pattern: NSHapticFeedbackManager.FeedbackPattern = haptic == .step ? .alignment : .generic
-                NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
-            case let .cancelled(reason):
-                switch reason {
-                case .stillness: debugLog("geste annulé (immobilité)")
-                case .escape: debugLog("geste annulé (Échap)")
-                case .interrupted: debugLog("geste annulé (interrompu par le système)")
-                }
-            }
+    private func tick() {
+        traced("réveil") {
+            scheduledDeadline = nil
+            deadlineTimer = nil
+            timed(.engine) { engine.tick() }
+            synchronize()
         }
     }
 
@@ -309,10 +325,24 @@ enum GestureEventTap {
     /// swipe, chaque événement la repousse, et recréer un timer cent fois par
     /// seconde ne servirait à rien. Un timer qui se réveille trop tôt envoie
     /// un `.tick` sans effet, puis se reprogramme sur la nouvelle échéance.
-    private static func synchronize() {
-        if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: machine.isTracking) }
+    private func synchronize() {
+        // Seulement quand l'état change — pas à chaque événement, comme
+        // avant : un geste de swipe en produit une centaine, chacun avec son
+        // aller-retour vers le serveur de fenêtres.
+        if let keyTap, let enable = keySwitch.transition(toTracking: engine.isTracking) {
+            timed(.tapEnable) {
+                tapControlQueue.async {
+                    let started = DispatchTime.now().uptimeNanoseconds
+                    CGEvent.tapEnable(tap: keyTap, enable: enable)
+                    let elapsed = DispatchTime.now().uptimeNanoseconds - started
+                    if Self.traceEnabled, elapsed > Self.slowCallbackNanoseconds {
+                        print("[GestureEventTap] tapEnable(clavier, \(enable)) : \(elapsed / 1000) µs — hors callback, sans effet sur le défilement")
+                    }
+                }
+            }
+        }
 
-        guard let deadline = machine.nextDeadline else {
+        guard let deadline = engine.nextDeadline else {
             deadlineTimer?.invalidate()
             deadlineTimer = nil
             scheduledDeadline = nil
@@ -320,27 +350,27 @@ enum GestureEventTap {
         }
         if let scheduledDeadline, scheduledDeadline <= deadline { return }
 
-        deadlineTimer?.invalidate()
-        let timer = Timer(timeInterval: max(0, deadline - now), repeats: false) { _ in
-            // Ajouté à la run loop principale ci-dessous.
-            MainActor.assumeIsolated { tick() }
+        timed(.timer) {
+            deadlineTimer?.invalidate()
+            let delay = max(0, deadline - ProcessInfo.processInfo.systemUptime)
+            let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in self?.tick() }
+            // Ajouté à la run loop de CE thread (on y est) ; `.common` : sans ça,
+            // le timer ne se déclencherait pas pendant qu'un menu est ouvert — et
+            // le pincement ne finirait jamais.
+            RunLoop.current.add(timer, forMode: .common)
+            deadlineTimer = timer
+            scheduledDeadline = deadline
         }
-        // `.common` : sans ça, le timer ne se déclencherait pas pendant qu'un
-        // menu est ouvert — et le pincement ne finirait jamais.
-        RunLoop.main.add(timer, forMode: .common)
-        deadlineTimer = timer
-        scheduledDeadline = deadline
     }
 
     /// macOS coupe un tap dont le callback tarde, ou sur certaines saisies.
     /// Un tap coupé reste mort **sans rien dire** : il faut le rallumer. Des
     /// événements ont été perdus entre-temps, donc le geste en cours n'a plus
     /// de fin fiable — on l'abandonne.
-    private static func recoverFromDisabledTap(_ type: CGEventType) {
+    private func recoverFromDisabledTap(_ type: CGEventType) {
         print("[GestureEventTap] ⚠️ tap coupé par macOS (\(type == .tapDisabledByTimeout ? "délai" : "saisie")) — réactivé, geste en cours abandonné")
         if let gestureTap { CGEvent.tapEnable(tap: gestureTap, enable: true) }
-        apply(machine.reset())
-        target = nil
+        engine.reset()
         synchronize()
     }
 
@@ -356,30 +386,90 @@ enum GestureEventTap {
         return nil
     }
 
-    private static func debugLog(_ message: @autoclosure () -> String) {
-        if GestureClassifier.debugLoggingEnabled {
-            print("[GestureEventTap] \(message())")
+    // MARK: Mesure
+
+    /// Chronomètre un callback entier et, s'il est lent, dit OÙ le temps est
+    /// passé — étape par étape — plutôt que de laisser deviner.
+    ///
+    /// Le corps tourne dans un `autoreleasepool` : la run loop d'un `Thread`
+    /// Foundation n'en vide aucun, et chaque `NSEvent(cgEvent:)` laisse des
+    /// objets autoreleasés derrière lui. Mesuré hors app : 200 000 événements
+    /// sans pool font passer l'empreinte de 10 à 253 Mo (≈ 1,2 Ko par
+    /// événement, donc de quoi grossir en continu pendant un défilement) ;
+    /// avec pool, elle reste à 12 Mo. Le vidage du pool est compté dans le
+    /// callback, donc visible dans « reste ».
+    private func traced<T>(_ kind: String, _ body: () -> T) -> T {
+        autoreleasepool {
+            trace.begin(kind: kind)
+            let started = DispatchTime.now().uptimeNanoseconds
+            let result = body()
+            let total = DispatchTime.now().uptimeNanoseconds - started
+
+            metrics.record(total)
+            if Self.traceEnabled, total > Self.slowCallbackNanoseconds {
+                print("[GestureEventTap] ⚠️ callback lent : \(total / 1000) µs — \(trace.breakdown(total: total))")
+            }
+            trace.finish()
+            return result
         }
+    }
+
+    private func timed<T>(_ step: TapStep, _ body: () -> T) -> T {
+        let started = DispatchTime.now().uptimeNanoseconds
+        let result = body()
+        trace.add(step, nanoseconds: DispatchTime.now().uptimeNanoseconds - started)
+        return result
+    }
+}
+
+/// Quand allumer et éteindre le tap clavier : à chaque CHANGEMENT de l'état
+/// « un geste est suivi », jamais entre deux.
+struct KeyTapSwitch: Equatable {
+    private var isEnabled = false
+
+    /// L'état à appliquer au tap, ou `nil` s'il n'y a rien à faire.
+    mutating func transition(toTracking tracking: Bool) -> Bool? {
+        guard tracking != isEnabled else { return nil }
+        isEnabled = tracking
+        return tracking
+    }
+}
+
+/// La durée des callbacks : de quoi juger, avant d'activer le tap, ce que
+/// coûte d'être dans la chaîne d'entrée du système.
+struct CallbackMetrics: Equatable {
+    private(set) var count = 0
+    private(set) var totalNanoseconds: UInt64 = 0
+    private(set) var maxNanoseconds: UInt64 = 0
+
+    mutating func record(_ nanoseconds: UInt64) {
+        count += 1
+        totalNanoseconds += nanoseconds
+        maxNanoseconds = max(maxNanoseconds, nanoseconds)
+    }
+
+    var summary: String {
+        guard count > 0 else { return "aucun callback" }
+        return "\(count) callbacks, moyenne \(totalNanoseconds / UInt64(count) / 1000) µs, max \(maxNanoseconds / 1000) µs"
     }
 }
 
 // MARK: - Callbacks C
 
 /// Fonctions top-level plutôt que closures littérales : un
-/// `CGEventTapCallBack` doit pouvoir se former en pointeur de fonction C,
-/// ce que le compilateur refuse pour une closure qui référence un autre
-/// membre `static` du type englobant.
-///
-/// Les sources des deux taps sont sur la run loop principale : ces callbacks
-/// y sont donc toujours appelés.
+/// `CGEventTapCallBack` doit pouvoir se former en pointeur de fonction C.
+/// Le runner voyage dans `refcon` ; les sources des deux taps sont sur la run
+/// loop de son thread : ces callbacks n'y sont appelés que là.
 private func gestureTapCallback(
     proxy: CGEventTapProxy,
     type: CGEventType,
     event: CGEvent,
     refcon: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
-    let disposition = MainActor.assumeIsolated { GestureEventTap.handle(type: type, event: event) }
-    // Sans effet en écoute seule ; à l'étape 5, `nil` avalera l'événement.
+    guard let refcon else { return Unmanaged.passUnretained(event) }
+    let runner = Unmanaged<GestureTapRunner>.fromOpaque(refcon).takeUnretainedValue()
+    let disposition = runner.handleGesture(type: type, event: event)
+    // Sans effet en écoute seule ; à l'étape 5b, `nil` avalera l'événement.
     return disposition == .swallow ? nil : Unmanaged.passUnretained(event)
 }
 
@@ -389,6 +479,8 @@ private func keyTapCallback(
     event: CGEvent,
     refcon: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
-    MainActor.assumeIsolated { GestureEventTap.handleKey(type: type, event: event) }
+    if let refcon {
+        Unmanaged<GestureTapRunner>.fromOpaque(refcon).takeUnretainedValue().handleKey(type: type, event: event)
+    }
     return Unmanaged.passUnretained(event)
 }

@@ -46,6 +46,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             print("[AppDelegate] permission Accessibility manquante — "
                 + "détection globale non démarrée. Demande de la permission…")
             WindowController.requestAccessibilityPermission()
+        } catch GestureMonitor.StartError.anotherHostRunning(let processID, let name) {
+            let holder = [name, processID.map { "pid \($0)" }].compactMap { $0 }.joined(separator: ", ")
+            print("[AppDelegate] détection globale non démarrée : déjà active dans un autre processus (\(holder)).")
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Une autre app de gestes est déjà active"
+            alert.informativeText = "La détection tourne déjà dans un autre processus (\(holder)). "
+                + "Deux apps sur le même trackpad suivraient le même geste et agiraient chacune "
+                + "sur la même fenêtre. Quitte l'autre app (bran ?) puis relance SwishClone."
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
         } catch {
             print("[AppDelegate] détection globale non démarrée : \(error)")
         }
@@ -149,6 +160,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             width: screen.frame.width / 2,
             height: screen.frame.height
         )
+    }
+
+    /// Arrêt propre de la détection : joint le thread du tap, libère le
+    /// verrou d'hôte et imprime le bilan des durées de callback (le relevé
+    /// qu'on lit avant d'activer le tap, à l'étape 5b).
+    func applicationWillTerminate(_ notification: Notification) {
+        GestureMonitor.stop()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
