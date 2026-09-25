@@ -35,8 +35,26 @@ public struct AXNodeInfo: Equatable, Sendable {
 /// 3. **Barre de titre** si le chemin passe par une barre d'outils (qui peut
 ///    être plus haute que la zone réglée — Finder, Mail), ou, à défaut, si le
 ///    curseur est dans les `zoneHeight` premiers points de la fenêtre. Ce
-///    repli couvre les barres de titre dessinées à la main (Chrome,
-///    applications Electron), qu'AX décrit comme de simples groupes.
+///    repli couvre les barres de titre dessinées à la main en natif
+///    (Chrome), qu'AX décrit comme de simples groupes.
+///
+/// **Limite connue — apps Electron (Claude, etc.) : leur barre de titre est
+/// du contenu web. Les gestes ne s'y accrochent que sur l'espace laissé
+/// libre par l'app, voire nulle part quand la fenêtre est étroite.** Relevé
+/// le 25/09/2026 sur Claude en demi-écran : de y = 0 à y = 30 et sur toute la
+/// largeur, tout est sous un `AXWebArea` (exclu par la règle 2), sauf les
+/// trois feux natifs. Pas de marge libre, même au premier pixel.
+///
+/// **Piste écartée** : accepter, dans la bande du haut, un `AXGroup` web
+/// sans texte dont aucun enfant ne couvre le point. Sonde du même jour :
+/// sous l'en-tête de Claude (48 pt), la conversation défile dès y = 48 pt
+/// et AX la présente comme un simple `AXGroup` — seule sa classe CSS
+/// (`overflow-y-auto`) la trahit. Avec `gestureZoneHeight` réglé au-delà de
+/// 48 pt (le réglage va jusqu'à 100), la règle assouplie accepterait des
+/// points sur la conversation, et le tap actif volerait son défilement. Se
+/// protéger demanderait de lire les classes CSS de chaque app, qui peuvent
+/// changer à chaque mise à jour : trop fragile pour une règle qui décide de
+/// ce qu'on avale.
 public enum TitlebarHitTest {
 
     public enum Verdict: Equatable, Sendable {

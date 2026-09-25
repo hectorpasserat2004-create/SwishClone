@@ -58,6 +58,28 @@ traiter ce cas dans son `catch`. La garde ne voit que les processus de la
 même session et du même dossier temporaire : un hôte sous bac à sable
 (container à part) ne la déclencherait pas.
 
+## Limites connues
+
+- **Apps Electron (Claude, etc.) : leur barre de titre est du contenu web.
+  Les gestes ne s'y accrochent que sur l'espace laissé libre par l'app,
+  voire nulle part quand la fenêtre est étroite.** Relevé sur Claude en
+  demi-écran : du tout premier pixel jusqu'à 30 pt sous le haut de la
+  fenêtre, tout est sous un `AXWebArea`, sauf les trois feux natifs.
+  `TitlebarHitTest` exclut le contenu web pour ne jamais voler le
+  défilement d'une page.
+
+  **Piste écartée : accepter un groupe web « vide » dans la bande du haut.**
+  Sondée en lecture seule sur Claude : sous l'en-tête (`.dframe-header`,
+  48 pt de haut), le contenu de la conversation **défile dès y = 48 pt, et
+  AX le présente comme un simple `AXGroup`, sans rôle de défilement** —
+  seule sa classe CSS (`overflow-y-auto`) le trahit. La hauteur de zone par
+  défaut (40 pt) passe au-dessus, mais le réglage monte jusqu'à 100 pt :
+  au-delà de 48 pt, la règle assouplie accepterait des points sur la
+  conversation, et le tap actif lui volerait son défilement. La seule
+  parade serait de lire les classes CSS de chaque app, que rien ne
+  garantit d'une version à l'autre. Le confort manquant (gestes sur Claude
+  en fenêtre étroite) ne vaut pas ce risque.
+
 ## Prérequis
 - Xcode Command Line Tools installés (`xcode-select --install`)
 - Pas besoin de l'app Xcode complète
