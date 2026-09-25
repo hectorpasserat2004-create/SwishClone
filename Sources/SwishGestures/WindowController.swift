@@ -101,7 +101,11 @@ public enum WindowController {
 
     // MARK: - Déplacement/redimensionnement animé
 
-    private static var animationTimer: Timer?
+    /// Une animation au plus par fenêtre. Les gestes visent la fenêtre sous
+    /// le curseur, pas seulement celle au premier plan : deux fenêtres
+    /// peuvent s'animer en même temps (le placement complémentaire de l'une
+    /// pendant la glissade correctrice de l'autre).
+    private static var animationTimers: [(window: WindowRef, timer: Timer)] = []
 
     /// Intervalle entre deux étapes (~75 fps). L'interpolation se base sur
     /// le temps écoulé réel et non sur un nombre d'étapes fixe : chaque
@@ -113,11 +117,10 @@ public enum WindowController {
     /// secondes (l'Accessibility API n'a pas d'animation native : on
     /// simule en écrivant position/taille à intervalles rapprochés).
     ///
-    /// Une animation déjà en cours est annulée avant d'en démarrer une
-    /// nouvelle, qui part de la position RÉELLE actuelle de la fenêtre
-    /// (relue ici), pas du point de départ de l'ancienne. Un seul timer
-    /// existe à la fois : les gestes n'agissent que sur la fenêtre au
-    /// premier plan, donc il n'y a jamais deux fenêtres à animer.
+    /// Une animation déjà en cours **sur cette fenêtre** est annulée avant
+    /// d'en démarrer une nouvelle, qui part de la position RÉELLE actuelle
+    /// (relue ici), pas du point de départ de l'ancienne. Les animations des
+    /// autres fenêtres continuent.
     public static func animatedMoveAndResize(
         window: AXUIElement,
         x: CGFloat,
@@ -130,8 +133,12 @@ public enum WindowController {
         // est évalué hors de l'acteur principal.
         let duration = duration ?? GestureSettings.shared.animationDuration
 
-        animationTimer?.invalidate()
-        animationTimer = nil
+        let ref = WindowRef(window)
+        animationTimers.removeAll { entry in
+            guard entry.window == ref else { return false }
+            entry.timer.invalidate()
+            return true
+        }
 
         guard let startPosition = position(of: window), let startSize = size(of: window) else {
             // Impossible de lire l'état de départ : pas d'interpolation
@@ -152,7 +159,7 @@ public enum WindowController {
                     // erreur d'arrondi cumulée.
                     moveAndResize(window: window, x: x, y: y, width: width, height: height)
                     timer.invalidate()
-                    if animationTimer === timer { animationTimer = nil }
+                    animationTimers.removeAll { $0.timer === timer }
                     return
                 }
 
@@ -168,7 +175,7 @@ public enum WindowController {
             }
         }
         RunLoop.main.add(timer, forMode: .common)
-        animationTimer = timer
+        animationTimers.append((ref, timer))
     }
 
     // MARK: - Plein écran natif
@@ -239,9 +246,15 @@ public enum WindowController {
             return
         }
         lastActionDate = Date()
-        // Toute nouvelle action rend caduque la vérification de débordement
-        // de la précédente.
-        overflowCheckGeneration &+= 1
+        // Une nouvelle action sur CETTE fenêtre rend caduques ses relectures
+        // en attente — pas celles d'une autre fenêtre (placer la fenêtre
+        // complémentaire juste après ne doit pas annuler celles de la
+        // première).
+        pendingOverflowChecks.removeAll { $0.window == WindowRef(window) }
+
+        // Hors des moitiés, la fenêtre quitte sa zone mémorisée (elle y est
+        // réenregistrée plus bas si l'action est une moitié).
+        if HalfZone(action) == nil { placements.forget(WindowRef(window)) }
 
         switch action {
         case .minimize:
@@ -264,10 +277,23 @@ public enum WindowController {
 
         default:
             guard let current = frame(of: window),
-                  let visible = visibleFrame(forWindowAt: current),
-                  let target = WindowLayout.frame(for: action, in: visible) else {
+                  let screen = screen(forWindowAt: current),
+                  let theoretical = WindowLayout.frame(for: action, in: screen.visible) else {
                 debugLog("action \(action) impossible : cadre ou écran introuvable")
                 return
+            }
+            let visible = screen.visible
+            var target = theoretical
+            let zone = HalfZone(action)
+            if let zone {
+                // Placement complémentaire : se caler sur le bord réel de la
+                // fenêtre qui occupe la moitié d'en face, si elle est valide.
+                let occupant = validOccupant(of: zone.complement, on: screen.id, excluding: window)
+                target = ComplementaryLayout.frame(for: zone, in: visible, occupant: occupant)
+                if target != theoretical {
+                    debugLog("moitié \(zone) calée sur la fenêtre d'en face : \(target) au lieu de \(theoretical)")
+                }
+                placements.record(WindowRef(window), in: zone, on: screen.id, frame: target)
             }
             animatedMoveAndResize(
                 window: window,
@@ -283,6 +309,13 @@ public enum WindowController {
     // MARK: - Fenêtres qui refusent la taille demandée
 
     private static var overflowCheckGeneration = 0
+    /// La dernière action de chaque fenêtre dont des relectures sont en
+    /// attente. Courte : une entrée s'en va à la dernière relecture.
+    private static var pendingOverflowChecks: [(window: WindowRef, generation: Int)] = []
+
+    private static func isLatestAction(_ generation: Int, on window: AXUIElement) -> Bool {
+        pendingOverflowChecks.contains { $0.window == WindowRef(window) && $0.generation == generation }
+    }
 
     /// Relectures après l'animation : la première juste après, la seconde
     /// plus tard pour les apps qui se réajustent en différé.
@@ -295,16 +328,28 @@ public enum WindowController {
     /// Deux relectures, parce qu'une app peut se réajuster tout de suite ou
     /// un peu plus tard. La correction est idempotente : une fenêtre déjà
     /// remise en place ne bouge plus. Une nouvelle action entre-temps annule
-    /// les relectures en attente (`overflowCheckGeneration`).
+    /// les relectures en attente de cette fenêtre-là (`pendingOverflowChecks`).
     private static func scheduleOverflowCheck(of window: AXUIElement, in visible: CGRect) {
+        overflowCheckGeneration &+= 1
         let generation = overflowCheckGeneration
+        pendingOverflowChecks.append((WindowRef(window), generation))
+        let lastDelay = overflowCheckDelays.last
         let animation = GestureSettings.shared.animationDuration
         for delay in overflowCheckDelays {
             DispatchQueue.main.asyncAfter(deadline: .now() + animation + delay) {
                 MainActor.assumeIsolated {
-                    guard generation == overflowCheckGeneration,
-                          let actual = frame(of: window),
-                          let corrected = WindowLayout.correctedFrame(for: actual, in: visible) else { return }
+                    guard isLatestAction(generation, on: window) else { return }
+                    if delay == lastDelay {
+                        pendingOverflowChecks.removeAll { $0.window == WindowRef(window) && $0.generation == generation }
+                    }
+                    guard let actual = frame(of: window) else { return }
+                    guard let corrected = WindowLayout.correctedFrame(for: actual, in: visible) else {
+                        // Le cadre constaté devient la référence du placement
+                        // complémentaire (sans effet hors des moitiés).
+                        placements.updateFrame(of: WindowRef(window), to: actual)
+                        return
+                    }
+                    placements.updateFrame(of: WindowRef(window), to: corrected)
                     debugLog("fenêtre hors de l'écran après l'action (\(actual)) — ramenée en \(corrected), taille inchangée")
                     animatedMoveAndResize(
                         window: window,
@@ -335,13 +380,67 @@ public enum WindowController {
         }
     }
 
-    /// La zone utile de l'écran qui porte la fenêtre, en coordonnées AX.
-    static func visibleFrame(forWindowAt windowFrame: CGRect) -> CGRect? {
+    /// L'écran qui porte la fenêtre : son numéro d'affichage (stable quand
+    /// un autre écran est branché ou débranché) et sa zone utile, en
+    /// coordonnées AX.
+    static func screen(forWindowAt windowFrame: CGRect) -> (id: CGDirectDisplayID, visible: CGRect)? {
         let screens = NSScreen.screens
         guard let primaryHeight = screens.first?.frame.height else { return nil }
         let frames = screens.map { ScreenGeometry.axRect(fromCocoa: $0.frame, primaryScreenHeight: primaryHeight) }
         guard let index = ScreenGeometry.screenIndex(for: windowFrame, among: frames) else { return nil }
-        return ScreenGeometry.axRect(fromCocoa: screens[index].visibleFrame, primaryScreenHeight: primaryHeight)
+        let number = screens[index].deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        return (
+            CGDirectDisplayID(number?.uint32Value ?? 0),
+            ScreenGeometry.axRect(fromCocoa: screens[index].visibleFrame, primaryScreenHeight: primaryHeight)
+        )
+    }
+
+    // MARK: - Placement complémentaire
+
+    /// Un `AXUIElement` comparé par `CFEqual` : deux références vers la même
+    /// fenêtre sont égales même si ce ne sont pas les mêmes objets.
+    struct WindowRef: Equatable {
+        let element: AXUIElement
+        init(_ element: AXUIElement) { self.element = element }
+        static func == (a: WindowRef, b: WindowRef) -> Bool { CFEqual(a.element, b.element) }
+    }
+
+    /// Quelle fenêtre occupe quelle moitié, par écran. En mémoire, pour la
+    /// durée du processus ; vidée par `resetPlacements()`.
+    private static var placements = PlacementMemory<WindowRef, CGDirectDisplayID>()
+
+    /// Oublie tous les placements : à l'arrêt de la détection et quand la
+    /// configuration des écrans change (les zones utiles ne sont plus les
+    /// mêmes).
+    public static func resetPlacements() {
+        placements.removeAll()
+    }
+
+    /// Le cadre réel actuel de l'occupant de `zone`, s'il l'occupe toujours
+    /// (voir `PlacementValidation`). Un occupant qui ne compte plus est
+    /// oublié au passage.
+    private static func validOccupant(of zone: HalfZone, on screen: CGDirectDisplayID, excluding window: AXUIElement) -> CGRect? {
+        guard let entry = placements.occupant(of: zone, on: screen, excluding: WindowRef(window)) else { return nil }
+        let element = entry.window.element
+        let actual = frame(of: element)
+        let valid = PlacementValidation.isStillPlaced(
+            recorded: entry.frame,
+            actual: actual,
+            isMinimized: boolAttribute(element, kAXMinimizedAttribute as CFString),
+            isFullScreen: boolAttribute(element, fullScreenAttributeName)
+        )
+        guard valid else {
+            debugLog("occupant de la moitié \(zone) oublié : déplacé, fermé, réduit ou en plein écran")
+            placements.forget(entry.window)
+            return nil
+        }
+        return actual
+    }
+
+    private static func boolAttribute(_ element: AXUIElement, _ attribute: CFString) -> Bool {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return false }
+        return (value as? NSNumber)?.boolValue ?? false
     }
 
     /// Chemin de la fenêtre de test locale (`TouchGestureView`) : agit sur

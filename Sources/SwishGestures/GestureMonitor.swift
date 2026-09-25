@@ -1,3 +1,4 @@
+import AppKit
 import SwishCloneCore
 
 /// Point d'entrée public de la détection globale : démarre et arrête le
@@ -57,13 +58,27 @@ public enum GestureMonitor {
             hostLock.release()
             throw StartError.eventTapUnavailable
         }
+        // Écrans branchés, débranchés ou réarrangés : les zones utiles
+        // changent, les placements mémorisés ne veulent plus rien dire.
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { WindowController.resetPlacements() }
+        }
         isRunning = true
     }
 
     public static func stop() {
         guard isRunning else { return }
         GestureEventTap.stop()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = nil
+        WindowController.resetPlacements()
         hostLock.release()
         isRunning = false
     }
+
+    private static var screenObserver: (any NSObjectProtocol)?
 }
