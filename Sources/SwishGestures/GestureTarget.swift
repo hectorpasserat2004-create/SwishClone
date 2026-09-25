@@ -60,9 +60,23 @@ public enum GestureTarget {
         return hitTest(at: point, zoneHeight: GestureSettings.shared.gestureZoneHeight)
     }
 
-    /// `nonisolated` : n'utilise que des appels AX, sûrs depuis n'importe
-    /// quel thread — le tap de l'étape 5 l'appellera depuis le sien.
+    /// `nonisolated` : appelé depuis le thread du tap.
+    ///
+    /// **Les appels AX ne sont sûrs hors du thread principal que s'ils visent
+    /// un autre processus.** Quand le point tombe sur une fenêtre de l'app
+    /// hôte, AX ne passe pas par le serveur : il répond sur place, dans le
+    /// thread appelant, en faisant parcourir à AppKit et SwiftUI leur arbre
+    /// d'accessibilité. Relevé dans bran le 26/09/2026, deux plantages en une
+    /// minute, curseur sur ses réglages : `objc_release` sur un objet déjà
+    /// libéré dans `CopyElementAtPosition`, puis `dispatch_assert_queue` sur
+    /// le corps d'une vue SwiftUI évalué depuis `SwishClone.gesture-tap`.
+    ///
+    /// Le test sur le pid qui suit l'appel arrivait donc trop tard : il ne
+    /// refusait que ce qui avait déjà planté. On regarde d'abord la liste des
+    /// fenêtres du serveur, qui ne touche ni AppKit ni AX.
     public static func hitTest(at point: CGPoint, zoneHeight: Double) -> Target? {
+        guard ownWindowMayCover(point) == false else { return nil }
+
         let systemWide = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(systemWide, messagingTimeout)
 
@@ -104,6 +118,31 @@ public enum GestureTarget {
             current = parent
         }
         return nil
+    }
+
+    /// Une fenêtre visible de ce processus contient-elle le point ?
+    ///
+    /// **N'importe laquelle, pas seulement celle du dessus.** S'arrêter à la
+    /// première fenêtre sous le point laisserait passer le cas d'un calque
+    /// transparent d'une autre app posé sur une fenêtre de l'hôte : AX le
+    /// traverse et retombe sur l'hôte. Le prix est de perdre le geste sur une
+    /// fenêtre étrangère qui recouvre une fenêtre de l'hôte, jamais de planter.
+    ///
+    /// Une liste illisible répond « oui » pour la même raison : un geste
+    /// manqué se refait, un plantage emporte l'app hôte.
+    static func ownWindowMayCover(_ point: CGPoint) -> Bool {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            return true
+        }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        return windows.contains { window in
+            guard (window[kCGWindowOwnerPID as String] as? pid_t) == ownPID,
+                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: bounds)
+            else { return false }
+            return frame.contains(point)
+        }
     }
 
     // MARK: - Dock
