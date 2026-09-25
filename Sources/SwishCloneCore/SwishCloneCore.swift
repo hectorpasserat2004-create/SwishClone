@@ -3,5 +3,5 @@
 // (fonctions pures : positions de doigts en entrée -> geste en sortie).
 
 public enum SwishCloneCore {
-    public static let version = "0.0.1"
+    public static let version = "0.1.2"
 }
