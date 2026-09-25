@@ -239,6 +239,9 @@ public enum WindowController {
             return
         }
         lastActionDate = Date()
+        // Toute nouvelle action rend caduque la vérification de débordement
+        // de la précédente.
+        overflowCheckGeneration &+= 1
 
         switch action {
         case .minimize:
@@ -273,6 +276,45 @@ public enum WindowController {
                 width: target.width,
                 height: target.height
             )
+            scheduleOverflowCheck(of: window, in: visible)
+        }
+    }
+
+    // MARK: - Fenêtres qui refusent la taille demandée
+
+    private static var overflowCheckGeneration = 0
+
+    /// Relectures après l'animation : la première juste après, la seconde
+    /// plus tard pour les apps qui se réajustent en différé.
+    private static let overflowCheckDelays: [TimeInterval] = [0.1, 0.6]
+
+    /// **Relit le cadre réel une fois l'animation finie et ramène la
+    /// fenêtre dans la zone utile si elle en déborde** — sans toucher à sa
+    /// taille. Voir `WindowLayout.correctedFrame(for:in:)`.
+    ///
+    /// Deux relectures, parce qu'une app peut se réajuster tout de suite ou
+    /// un peu plus tard. La correction est idempotente : une fenêtre déjà
+    /// remise en place ne bouge plus. Une nouvelle action entre-temps annule
+    /// les relectures en attente (`overflowCheckGeneration`).
+    private static func scheduleOverflowCheck(of window: AXUIElement, in visible: CGRect) {
+        let generation = overflowCheckGeneration
+        let animation = GestureSettings.shared.animationDuration
+        for delay in overflowCheckDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + animation + delay) {
+                MainActor.assumeIsolated {
+                    guard generation == overflowCheckGeneration,
+                          let actual = frame(of: window),
+                          let corrected = WindowLayout.correctedFrame(for: actual, in: visible) else { return }
+                    debugLog("fenêtre hors de l'écran après l'action (\(actual)) — ramenée en \(corrected), taille inchangée")
+                    animatedMoveAndResize(
+                        window: window,
+                        x: corrected.minX,
+                        y: corrected.minY,
+                        width: corrected.width,
+                        height: corrected.height
+                    )
+                }
+            }
         }
     }
 

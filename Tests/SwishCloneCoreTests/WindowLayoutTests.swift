@@ -118,3 +118,114 @@ final class WindowLayoutTests: XCTestCase {
         }
     }
 }
+
+final class OverflowCorrectionTests: XCTestCase {
+
+    /// Zone utile de l'écran principal : 1 440 × 805 à partir de y = 25
+    /// (coordonnées AX, barre de menus au-dessus, Dock en dessous).
+    private let visible = CGRect(x: 0, y: 25, width: 1440, height: 805)
+
+    private func corrected(_ actual: CGRect, in rect: CGRect? = nil) -> CGRect? {
+        WindowLayout.correctedFrame(for: actual, in: rect ?? visible)
+    }
+
+    // MARK: - Rien à corriger
+
+    func testWindowThatFitsIsLeftAlone() {
+        XCTAssertNil(corrected(CGRect(x: 720, y: 25, width: 720, height: 805)), "moitié droite exacte")
+        XCTAssertNil(corrected(CGRect(x: 300, y: 200, width: 500, height: 400)), "fenêtre quelconque à l'intérieur")
+    }
+
+    func testRoundingIsNotAnOverflow() {
+        // Quart bas-droite demandé à y = 427,5 × 402,5 ; l'app pose 428 × 403.
+        XCTAssertNil(corrected(CGRect(x: 720, y: 428, width: 720, height: 403)))
+    }
+
+    // MARK: - Un côté
+
+    func testRightOverflowIsAnchoredOnTheRightEdge() {
+        // Moitié droite demandée (720 de large), l'app impose 900.
+        XCTAssertEqual(
+            corrected(CGRect(x: 720, y: 25, width: 900, height: 805)),
+            CGRect(x: 540, y: 25, width: 900, height: 805)
+        )
+    }
+
+    func testBottomOverflowIsAnchoredOnTheBottomEdge() {
+        // Moitié basse demandée (402,5 de haut), l'app impose 500.
+        XCTAssertEqual(
+            corrected(CGRect(x: 0, y: 427.5, width: 1440, height: 500)),
+            CGRect(x: 0, y: 330, width: 1440, height: 500)
+        )
+    }
+
+    func testLeftAndTopOverflowAreAnchoredToo() {
+        XCTAssertEqual(
+            corrected(CGRect(x: -50, y: 10, width: 600, height: 400)),
+            CGRect(x: 0, y: 25, width: 600, height: 400)
+        )
+    }
+
+    // MARK: - Deux côtés
+
+    func testQuarterOverflowingRightAndBottom() {
+        XCTAssertEqual(
+            corrected(CGRect(x: 720, y: 427.5, width: 900, height: 500)),
+            CGRect(x: 540, y: 330, width: 900, height: 500)
+        )
+    }
+
+    // MARK: - Plus grande que l'écran
+
+    func testWiderThanTheScreenKeepsItsLeftEdgeVisible() {
+        // Les feux tricolores sont à gauche : c'est ce bord-là qu'on garde.
+        XCTAssertEqual(
+            corrected(CGRect(x: 720, y: 25, width: 1600, height: 805)),
+            CGRect(x: 0, y: 25, width: 1600, height: 805)
+        )
+        XCTAssertNil(corrected(CGRect(x: 0, y: 25, width: 1600, height: 805)), "déjà calée à gauche")
+    }
+
+    func testTallerThanTheScreenKeepsItsTitlebarVisible() {
+        XCTAssertEqual(
+            corrected(CGRect(x: 100, y: 300, width: 600, height: 900)),
+            CGRect(x: 100, y: 25, width: 600, height: 900)
+        )
+    }
+
+    // MARK: - Invariants
+
+    func testSizeIsNeverChanged() {
+        let frames = [
+            CGRect(x: 720, y: 25, width: 900, height: 805),
+            CGRect(x: 720, y: 427.5, width: 900, height: 500),
+            CGRect(x: -50, y: 10, width: 600, height: 400),
+            CGRect(x: 720, y: 25, width: 1600, height: 805),
+        ]
+        for frame in frames {
+            XCTAssertEqual(corrected(frame)?.size, frame.size, "\(frame)")
+        }
+    }
+
+    func testCorrectedFrameFitsWheneverItCan() {
+        let frames = [
+            CGRect(x: 720, y: 25, width: 900, height: 805),
+            CGRect(x: 720, y: 427.5, width: 900, height: 500),
+            CGRect(x: -50, y: 10, width: 600, height: 400),
+            CGRect(x: 1300, y: 800, width: 400, height: 300),
+        ]
+        for frame in frames {
+            let result = corrected(frame)!
+            XCTAssertTrue(visible.contains(result), "\(frame) → \(result)")
+            XCTAssertNil(corrected(result), "une seconde correction ne doit rien changer")
+        }
+    }
+
+    func testSecondaryScreenAboveThePrimary() {
+        let above = CGRect(x: 0, y: -1080, width: 1920, height: 1055)
+        XCTAssertEqual(
+            corrected(CGRect(x: 960, y: -1080, width: 1100, height: 1055), in: above),
+            CGRect(x: 820, y: -1080, width: 1100, height: 1055)
+        )
+    }
+}

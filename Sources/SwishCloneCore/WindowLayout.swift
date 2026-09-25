@@ -94,4 +94,39 @@ public enum WindowLayout {
             return nil
         }
     }
+
+    // MARK: - Fenêtres qui refusent la taille demandée
+
+    /// En dessous, un débordement est un arrondi, pas un débordement : les
+    /// apps posent leurs fenêtres au point entier (402,5 demandé, 403 reçu).
+    public static let overflowTolerance: CGFloat = 1
+
+    /// **Le cadre réel ramené dans la zone utile, par simple translation**,
+    /// ou `nil` s'il y tient déjà.
+    ///
+    /// Certaines apps ont une taille minimale plus grande que ce qu'on leur
+    /// demande (Claude avec son panneau d'historique ouvert, par exemple) :
+    /// elles se réajustent après coup et débordent de l'écran. La taille est
+    /// leur décision — on n'y touche pas. On ne corrige que la position, en
+    /// ancrant la fenêtre du côté où elle déborde : bord droit sur le bord
+    /// droit de l'écran si elle dépasse à droite, et ainsi de suite.
+    ///
+    /// Plus grande que la zone utile sur un axe, elle ne peut pas y tenir :
+    /// on garde alors son **début** visible — le bord gauche, où sont les
+    /// feux tricolores, et le haut, où est la barre de titre.
+    public static func correctedFrame(for actual: CGRect, in visible: CGRect) -> CGRect? {
+        let x = fitted(start: actual.minX, length: actual.width, lower: visible.minX, upper: visible.maxX)
+        let y = fitted(start: actual.minY, length: actual.height, lower: visible.minY, upper: visible.maxY)
+        guard x != actual.minX || y != actual.minY else { return nil }
+        return CGRect(x: x, y: y, width: actual.width, height: actual.height)
+    }
+
+    private static func fitted(start: CGFloat, length: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        if length > upper - lower + overflowTolerance {
+            return start == lower ? start : lower
+        }
+        if start + length > upper + overflowTolerance { return upper - length }
+        if start < lower - overflowTolerance { return lower }
+        return start
+    }
 }
