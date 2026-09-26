@@ -66,27 +66,32 @@ public enum GestureTarget {
     /// un autre processus.** Quand le point tombe sur une fenêtre de l'app
     /// hôte, AX ne passe pas par le serveur : il répond sur place, dans le
     /// thread appelant, en faisant parcourir à AppKit et SwiftUI leur arbre
-    /// d'accessibilité. Relevé dans bran le 26/09/2026, deux plantages en une
-    /// minute, curseur sur ses réglages : `objc_release` sur un objet déjà
-    /// libéré dans `CopyElementAtPosition`, puis `dispatch_assert_queue` sur
-    /// le corps d'une vue SwiftUI évalué depuis `SwishClone.gesture-tap`.
+    /// d'accessibilité. Relevé dans bran le 26/09/2026, curseur sur ses
+    /// réglages : `objc_release` sur un objet déjà libéré dans
+    /// `CopyElementAtPosition`, et `dispatch_assert_queue` sur le corps d'une
+    /// vue SwiftUI évalué depuis `SwishClone.gesture-tap`.
     ///
-    /// Le test sur le pid qui suit l'appel arrivait donc trop tard : il ne
-    /// refusait que ce qui avait déjà planté. On regarde d'abord la liste des
-    /// fenêtres du serveur, qui ne touche ni AppKit ni AX.
+    /// Le test sur le pid qui suivait l'appel arrivait trop tard, et deviner
+    /// d'avance si l'élément système tomberait sur l'hôte ne suffit pas non
+    /// plus : l'ordre de la liste des fenêtres et celui d'AX peuvent diverger,
+    /// écran verrouillé par exemple. **On ne demande donc jamais rien à
+    /// l'élément système.** La liste des fenêtres désigne une application,
+    /// et le test se fait dans cette application seule : si c'est l'hôte, on
+    /// s'arrête avant tout appel AX. Au pire, l'app désignée n'est pas celle
+    /// qu'on voit, et le geste ne trouve rien — jamais un plantage.
     public static func hitTest(at point: CGPoint, zoneHeight: Double) -> Target? {
-        guard ownWindowMayCover(point) == false else { return nil }
+        guard let pid = applicationOwningWindow(at: point),
+              pid != ProcessInfo.processInfo.processIdentifier else { return nil }
 
-        let systemWide = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(systemWide, messagingTimeout)
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, messagingTimeout)
 
         var hit: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit) == .success,
+        guard AXUIElementCopyElementAtPosition(application, Float(point.x), Float(point.y), &hit) == .success,
               let hit else { return nil }
 
-        var pid: pid_t = 0
-        guard AXUIElementGetPid(hit, &pid) == .success,
-              pid != ProcessInfo.processInfo.processIdentifier else { return nil }
+        var hitPID: pid_t = 0
+        guard AXUIElementGetPid(hit, &hitPID) == .success, hitPID == pid else { return nil }
 
         // Le pid du Dock est relu à chaque geste plutôt que gardé : il change
         // quand le Dock redémarre, et la lecture ne coûte presque rien.
@@ -120,29 +125,27 @@ public enum GestureTarget {
         return nil
     }
 
-    /// Une fenêtre visible de ce processus contient-elle le point ?
+    /// L'application propriétaire de la fenêtre visible sous le point.
     ///
-    /// **N'importe laquelle, pas seulement celle du dessus.** S'arrêter à la
-    /// première fenêtre sous le point laisserait passer le cas d'un calque
-    /// transparent d'une autre app posé sur une fenêtre de l'hôte : AX le
-    /// traverse et retombe sur l'hôte. Le prix est de perdre le geste sur une
-    /// fenêtre étrangère qui recouvre une fenêtre de l'hôte, jamais de planter.
-    ///
-    /// Une liste illisible répond « oui » pour la même raison : un geste
-    /// manqué se refait, un plantage emporte l'app hôte.
-    static func ownWindowMayCover(_ point: CGPoint) -> Bool {
+    /// La liste du serveur va du premier plan vers l'arrière, sans toucher ni
+    /// AppKit ni AX. Seules comptent les couches de fenêtres d'app (0 et
+    /// au-dessus : panneaux, Dock, barre des menus) ; en dessous, c'est le
+    /// bureau. Une fenêtre entièrement transparente est traversée.
+    static func applicationOwningWindow(at point: CGPoint) -> pid_t? {
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
-            return true
+            return nil
         }
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        return windows.contains { window in
-            guard (window[kCGWindowOwnerPID as String] as? pid_t) == ownPID,
+        for window in windows {
+            guard (window[kCGWindowLayer as String] as? Int ?? -1) >= 0,
                   (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
                   let bounds = window[kCGWindowBounds as String] as? NSDictionary,
-                  let frame = CGRect(dictionaryRepresentation: bounds)
-            else { return false }
-            return frame.contains(point)
+                  let frame = CGRect(dictionaryRepresentation: bounds),
+                  frame.contains(point),
+                  let pid = window[kCGWindowOwnerPID as String] as? pid_t
+            else { continue }
+            return pid
         }
+        return nil
     }
 
     // MARK: - Dock
