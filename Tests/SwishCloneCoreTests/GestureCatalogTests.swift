@@ -32,7 +32,7 @@ final class GestureCatalogTests: XCTestCase {
         for (action, diagonal) in diagonals {
             let triggers = GestureCatalog.entry(for: action)?.triggers ?? []
             XCTAssertEqual(triggers.count, 3, "\(action)")
-            XCTAssertEqual(triggers.last, .swipes([diagonal]), "\(action)")
+            XCTAssertEqual(triggers.first, .swipes([diagonal]), "la diagonale se montre d'abord : \(action)")
         }
     }
 

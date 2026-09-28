@@ -55,8 +55,8 @@ public enum GestureCatalog {
         public let action: GestureAction
         public let target: GestureTargetKind
         /// Le premier est la forme à montrer ; les suivants sont les autres
-        /// façons d'arriver au même endroit (↓ puis → et → puis ↓, ou la
-        /// diagonale ↘ d'un seul mouvement).
+        /// façons d'arriver au même endroit. Pour un quart, la diagonale ↘
+        /// d'un seul mouvement d'abord, puis ↓ puis → et → puis ↓.
         public let triggers: [GestureTrigger]
 
         public var family: GestureSequence.Family { triggers[0].family }
@@ -71,10 +71,10 @@ public enum GestureCatalog {
         Entry(action: .minimize, target: .titlebar, triggers: [.swipes([.down])]),
         Entry(action: .topHalf, target: .titlebar, triggers: [.swipes([.up, .up])]),
         Entry(action: .bottomHalf, target: .titlebar, triggers: [.swipes([.down, .down])]),
-        Entry(action: .topLeftQuarter, target: .titlebar, triggers: [.swipes([.up, .left]), .swipes([.left, .up]), .swipes([.upLeft])]),
-        Entry(action: .topRightQuarter, target: .titlebar, triggers: [.swipes([.up, .right]), .swipes([.right, .up]), .swipes([.upRight])]),
-        Entry(action: .bottomLeftQuarter, target: .titlebar, triggers: [.swipes([.down, .left]), .swipes([.left, .down]), .swipes([.downLeft])]),
-        Entry(action: .bottomRightQuarter, target: .titlebar, triggers: [.swipes([.down, .right]), .swipes([.right, .down]), .swipes([.downRight])]),
+        Entry(action: .topLeftQuarter, target: .titlebar, triggers: [.swipes([.upLeft]), .swipes([.up, .left]), .swipes([.left, .up])]),
+        Entry(action: .topRightQuarter, target: .titlebar, triggers: [.swipes([.upRight]), .swipes([.up, .right]), .swipes([.right, .up])]),
+        Entry(action: .bottomLeftQuarter, target: .titlebar, triggers: [.swipes([.downLeft]), .swipes([.down, .left]), .swipes([.left, .down])]),
+        Entry(action: .bottomRightQuarter, target: .titlebar, triggers: [.swipes([.downRight]), .swipes([.down, .right]), .swipes([.right, .down])]),
         Entry(action: .toggleFullScreen, target: .titlebar, triggers: [.pinches([.out])]),
         Entry(action: .close, target: .titlebar, triggers: [.pinches([.in_])]),
         Entry(action: .quitApp, target: .dockApp, triggers: [.pinches([.in_])]),
