@@ -44,8 +44,9 @@ public struct GestureStateMachine: Sendable {
         /// sur une cible, le geste n'y est plus capturé du tout.
         public var disabledActions: Set<GestureAction> = []
         /// Amplitude cumulée, sur une étape, au-delà de laquelle une direction
-        /// de swipe devient candidate.
-        public var swipeThreshold: Double = 16
+        /// de swipe devient candidate. 10 plutôt que 16 : les essais réels
+        /// ont tous fini vers 10 en réglant le curseur.
+        public var swipeThreshold: Double = 10
         /// **Diagonale** : le mouvement se lit comme un quart d'un seul
         /// geste quand l'axe secondaire atteint cette fraction de l'axe
         /// principal. tan 30° : entre 30° et 60°, c'est une diagonale ; plus
@@ -53,10 +54,13 @@ public struct GestureStateMachine: Sendable {
         /// diagonale.
         public var diagonalRatio: Double = 0.577
         /// Même chose pour le pincement, en magnitude relative à l'étape.
-        public var pinchThreshold: Double = 0.1
+        /// 0,08 plutôt que 0,1, pour la même raison.
+        public var pinchThreshold: Double = 0.08
         /// Immobilité qui valide l'étape en cours et permet d'en enchaîner une
-        /// autre sans lever les doigts.
-        public var stepPause: TimeInterval = 0.3
+        /// autre sans lever les doigts. 0,2 s depuis que les diagonales font
+        /// les quarts sans pause : il ne reste à l'attendre que pour ↑↑, ↓↓
+        /// et les changements d'avis (0,3 s paraissait longue).
+        public var stepPause: TimeInterval = 0.2
         /// Immobilité qui annule le geste.
         public var cancelTimeout: TimeInterval = 0.8
         /// Silence qui vaut « doigts levés » pour un pincement sans phase.
@@ -511,11 +515,14 @@ public struct GestureStateMachine: Sendable {
     private mutating func handleTick(now: TimeInterval, effects: inout [Effect]) {
         switch state {
         case var .swipe(t):
-            let still = now - t.lastMovementAt
-            if still >= configuration.cancelTimeout {
+            // Comparé à l'échéance, écrite comme `nextDeadline` l'écrit, et
+            // non à `now - lastMovementAt` : loin de 0, l'arrondi fait tomber
+            // la différence juste sous le délai à l'échéance même, et un hôte
+            // réveillé pile à l'heure n'avancerait jamais.
+            if now >= t.lastMovementAt + configuration.cancelTimeout {
                 abandon(pending: t.steps.isEmpty == false || t.candidate != nil, reason: .stillness, effects: &effects)
                 state = .swipeCancelled
-            } else if let candidate = t.candidate, still >= configuration.stepPause {
+            } else if let candidate = t.candidate, now >= t.lastMovementAt + configuration.stepPause {
                 t.steps.append(candidate)
                 t.candidate = nil
                 t.accX = 0
@@ -528,15 +535,14 @@ public struct GestureStateMachine: Sendable {
         case var .pinch(p):
             // Sans phase, le silence est le lever — et il arrive avant toute
             // pause d'étape, puisque `pinchSessionGap` < `stepPause`.
-            if p.usesPhase == false, now - p.lastEventAt >= configuration.pinchSessionGap {
+            if p.usesPhase == false, now >= p.lastEventAt + configuration.pinchSessionGap {
                 finishPinch(p, effects: &effects)
                 return
             }
-            let still = now - p.lastMovementAt
-            if still >= configuration.cancelTimeout {
+            if now >= p.lastMovementAt + configuration.cancelTimeout {
                 abandon(pending: p.steps.isEmpty == false || p.candidate != nil, reason: .stillness, effects: &effects)
                 state = .pinchCancelled(lastEventAt: p.lastEventAt, usesPhase: p.usesPhase)
-            } else if let candidate = p.candidate, still >= configuration.stepPause {
+            } else if let candidate = p.candidate, now >= p.lastMovementAt + configuration.stepPause {
                 p.steps.append(candidate)
                 p.candidate = nil
                 p.stepBase = p.lastMagnitude
@@ -547,7 +553,7 @@ public struct GestureStateMachine: Sendable {
             }
 
         case let .pinchCancelled(lastEventAt, false), let .pinchPassThrough(lastEventAt, false):
-            if now - lastEventAt >= configuration.pinchSessionGap { state = .idle }
+            if now >= lastEventAt + configuration.pinchSessionGap { state = .idle }
 
         default:
             break

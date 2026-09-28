@@ -141,15 +141,17 @@ public final class GestureSettings: ObservableObject {
     private init() {
         // `object(forKey:) as? T ?? défaut` plutôt que `double(forKey:)` :
         // ce dernier renvoie 0 pour une clé absente, ce qui désactiverait
-        // silencieusement tous les seuils au premier lancement.
-        swipeThreshold = defaults.object(forKey: Key.swipeThreshold) as? Double ?? 16
-        pinchThreshold = defaults.object(forKey: Key.pinchThreshold) as? Double ?? 0.1
+        // silencieusement tous les seuils au premier lancement. Les valeurs
+        // par défaut du geste viennent de la machine : une seule source.
+        let machine = GestureStateMachine.Configuration()
+        swipeThreshold = defaults.object(forKey: Key.swipeThreshold) as? Double ?? machine.swipeThreshold
+        pinchThreshold = defaults.object(forKey: Key.pinchThreshold) as? Double ?? machine.pinchThreshold
         gestureZoneHeight = defaults.object(forKey: Key.gestureZoneHeight) as? Double ?? 40
         animationDuration = defaults.object(forKey: Key.animationDuration) as? Double ?? 0.2
         swipeEnabled = defaults.object(forKey: Key.swipeEnabled) as? Bool ?? true
         pinchEnabled = defaults.object(forKey: Key.pinchEnabled) as? Bool ?? true
-        stepPause = defaults.object(forKey: Key.stepPause) as? Double ?? 0.3
-        cancelTimeout = defaults.object(forKey: Key.cancelTimeout) as? Double ?? 0.8
+        stepPause = defaults.object(forKey: Key.stepPause) as? Double ?? machine.stepPause
+        cancelTimeout = defaults.object(forKey: Key.cancelTimeout) as? Double ?? machine.cancelTimeout
         previewEnabled = defaults.object(forKey: Key.previewEnabled) as? Bool ?? true
         hapticsEnabled = defaults.object(forKey: Key.hapticsEnabled) as? Bool ?? true
         linkedResizeEnabled = defaults.object(forKey: Key.linkedResizeEnabled) as? Bool ?? false

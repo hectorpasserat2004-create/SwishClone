@@ -44,6 +44,12 @@ private struct Driver {
         while let deadline = machine.nextDeadline, deadline <= end {
             now = max(now, deadline)
             send(.tick, after: 0)
+            // Une échéance que le réveil ne fait pas avancer bouclerait sans
+            // fin : un échec vaut mieux qu'un test bloqué.
+            if machine.nextDeadline == deadline {
+                XCTFail("échéance \(deadline) non tenue par un réveil à l'heure")
+                break
+            }
         }
         now = end
     }
@@ -126,9 +132,27 @@ final class GestureStateMachineTests: XCTestCase {
 
     func testBelowThresholdDoesNothing() {
         var driver = Driver()
-        driver.swipe(dx: -10)
+        driver.swipe(dx: -9)
         XCTAssertEqual(driver.commits, [])
         XCTAssertEqual(driver.previews, [], "aucun aperçu sans direction candidate")
+    }
+
+    /// Les seuils par défaut, là où ils basculent : 10 pour le glissement,
+    /// 0,08 pour le pincement.
+    func testDefaultThresholdsSitAtTenAndEightHundredths() {
+        var swipe = Driver()
+        swipe.swipe(dx: -10)
+        XCTAssertEqual(swipe.commits, [.leftHalf], "10 : le seuil est atteint")
+
+        var weakPinch = Driver()
+        weakPinch.pinch(to: [0.03, 0.075])
+        weakPinch.wait(0.2)
+        XCTAssertEqual(weakPinch.commits, [], "0,075 : sous le seuil")
+
+        var pinch = Driver()
+        pinch.pinch(to: [0.03, 0.085])
+        pinch.wait(0.2)
+        XCTAssertEqual(pinch.commits, [.toggleFullScreen], "0,085 : au-dessus")
     }
 
     // MARK: - Enchaînement sans lever les doigts
@@ -611,7 +635,55 @@ final class GestureStateMachineTests: XCTestCase {
         driver.scroll(.began)
         XCTAssertEqual(driver.machine.nextDeadline!, driver.now + 0.8, accuracy: 1e-9)
         driver.move(dx: 40)
-        XCTAssertEqual(driver.machine.nextDeadline!, driver.now + 0.3, accuracy: 1e-9)
+        XCTAssertEqual(driver.machine.nextDeadline!, driver.now + 0.2, accuracy: 1e-9)
+    }
+
+    /// Un hôte réveillé pile à l'échéance, avec une horloge loin de 0 comme
+    /// `systemUptime` : l'échéance doit être tenue quel que soit l'arrondi.
+    /// Plusieurs ordres de grandeur, parce que l'arrondi en dépend : vers
+    /// 100 000 il trahit la pause de 0,2 s, vers 1 000 le délai de 0,8 s.
+    func testATickExactlyAtTheDeadlineIsEnoughFarFromZero() {
+        let starts = [1_000.0, 10_000.0, 100_000.0, 1_000_000.0].flatMap { base in
+            (0 ..< 20).map { base + Double($0) * 0.37 }
+        }
+        for start in starts {
+            var step = Driver()
+            step.now = start
+            step.scroll(.began)
+            step.move(dy: -40)
+            step.now = step.machine.nextDeadline!
+            step.send(.tick, after: 0)
+            XCTAssertEqual(step.haptics, [.step], "pause, départ \(start)")
+
+            var cancel = Driver()
+            cancel.now = start
+            cancel.scroll(.began)
+            cancel.move(dy: -40)
+            cancel.wait(0.2)
+            cancel.now = cancel.machine.nextDeadline!
+            cancel.send(.tick, after: 0)
+            XCTAssertEqual(cancel.haptics, [.step, .cancel], "annulation, départ \(start)")
+
+            var pinch = Driver()
+            pinch.now = start
+            pinch.pinch(to: [0.05, 0.2])
+            pinch.now = pinch.machine.nextDeadline!
+            pinch.send(.tick, after: 0)
+            XCTAssertEqual(pinch.commits, [.toggleFullScreen], "fin de pincement, départ \(start)")
+        }
+    }
+
+    func testAFifthOfASecondValidatesAStep() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dy: -40)
+        driver.wait(0.19)
+        XCTAssertEqual(driver.haptics, [], "pas encore")
+        driver.wait(0.02)
+        XCTAssertEqual(driver.haptics, [.step], "0,2 s d'immobilité valident l'étape")
+        driver.move(dy: -40)
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [.topHalf])
     }
 }
 

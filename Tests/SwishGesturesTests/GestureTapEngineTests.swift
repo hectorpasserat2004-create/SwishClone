@@ -8,9 +8,10 @@ import SwishCloneCore
 private final class Harness {
     typealias Engine = GestureTapEngine
 
-    /// Part de 0, comme le `Driver` de la machine : loin de 0, l'arrondi des
-    /// flottants ferait tomber `now - lastMovementAt` juste sous `stepPause`
-    /// à l'échéance, et la boucle de `wait` ne finirait jamais.
+    /// Part de 0, comme le `Driver` de la machine. Ce n'est plus une
+    /// nécessité : la machine compare `now` à ses échéances telles qu'elle
+    /// les calcule, l'arrondi ne peut plus les faire diverger (voir
+    /// `testATickExactlyAtTheDeadlineIsEnoughFarFromZero`).
     var time: TimeInterval = 0
     var deliveries: [Engine.Delivery] = []
     var logs: [String] = []
