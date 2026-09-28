@@ -12,8 +12,8 @@ public enum GestureTrigger: Equatable, Sendable {
     }
 
     /// Le déclencheur en quelques caractères : « ← », « ↑↑ », « ↓ puis → »,
-    /// « Écarter ». Deux fois la même direction se lit d'un bloc ; deux
-    /// directions différentes demandent la pause, que « puis » rappelle.
+    /// « Écarter », « ↗ ». Deux fois la même direction se lit d'un bloc ;
+    /// deux directions différentes demandent la pause, que « puis » rappelle.
     public var symbols: String {
         switch self {
         case let .swipes(steps):
@@ -33,6 +33,10 @@ extension SwipeDirection {
         case .right: return "→"
         case .up: return "↑"
         case .down: return "↓"
+        case .upLeft: return "↖"
+        case .upRight: return "↗"
+        case .downLeft: return "↙"
+        case .downRight: return "↘"
         }
     }
 }
@@ -51,7 +55,8 @@ public enum GestureCatalog {
         public let action: GestureAction
         public let target: GestureTargetKind
         /// Le premier est la forme à montrer ; les suivants sont les autres
-        /// ordres qui mènent au même endroit (↓ puis → et → puis ↓).
+        /// façons d'arriver au même endroit (↓ puis → et → puis ↓, ou la
+        /// diagonale ↘ d'un seul mouvement).
         public let triggers: [GestureTrigger]
 
         public var family: GestureSequence.Family { triggers[0].family }
@@ -66,10 +71,10 @@ public enum GestureCatalog {
         Entry(action: .minimize, target: .titlebar, triggers: [.swipes([.down])]),
         Entry(action: .topHalf, target: .titlebar, triggers: [.swipes([.up, .up])]),
         Entry(action: .bottomHalf, target: .titlebar, triggers: [.swipes([.down, .down])]),
-        Entry(action: .topLeftQuarter, target: .titlebar, triggers: [.swipes([.up, .left]), .swipes([.left, .up])]),
-        Entry(action: .topRightQuarter, target: .titlebar, triggers: [.swipes([.up, .right]), .swipes([.right, .up])]),
-        Entry(action: .bottomLeftQuarter, target: .titlebar, triggers: [.swipes([.down, .left]), .swipes([.left, .down])]),
-        Entry(action: .bottomRightQuarter, target: .titlebar, triggers: [.swipes([.down, .right]), .swipes([.right, .down])]),
+        Entry(action: .topLeftQuarter, target: .titlebar, triggers: [.swipes([.up, .left]), .swipes([.left, .up]), .swipes([.upLeft])]),
+        Entry(action: .topRightQuarter, target: .titlebar, triggers: [.swipes([.up, .right]), .swipes([.right, .up]), .swipes([.upRight])]),
+        Entry(action: .bottomLeftQuarter, target: .titlebar, triggers: [.swipes([.down, .left]), .swipes([.left, .down]), .swipes([.downLeft])]),
+        Entry(action: .bottomRightQuarter, target: .titlebar, triggers: [.swipes([.down, .right]), .swipes([.right, .down]), .swipes([.downRight])]),
         Entry(action: .toggleFullScreen, target: .titlebar, triggers: [.pinches([.out])]),
         Entry(action: .close, target: .titlebar, triggers: [.pinches([.in_])]),
         Entry(action: .quitApp, target: .dockApp, triggers: [.pinches([.in_])]),

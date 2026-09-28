@@ -61,6 +61,14 @@ public enum GestureSequence {
                 // efface l'horizontale. Réservé à la verticale — ←← et →→
                 // ne changent rien.
                 if lastStep == step { horizontal = nil }
+            case .upLeft, .upRight, .downLeft, .downRight:
+                // Une diagonale pose le quart d'un coup, quoi qu'il y ait
+                // eu avant. Elle compte ensuite comme un quart construit :
+                // ← ou → qui change de sens rend la moitié, ↑ ou ↓ change
+                // de ligne, et il faut deux ↑ (ou ↓) pour la moitié — la
+                // diagonale n'est pas le premier des deux.
+                horizontal = step.horizontal
+                vertical = step.vertical
             }
             lastStep = step
             if horizontal != nil, vertical != nil { hasCombined = true }

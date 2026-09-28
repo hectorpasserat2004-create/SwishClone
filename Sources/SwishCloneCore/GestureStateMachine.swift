@@ -46,6 +46,12 @@ public struct GestureStateMachine: Sendable {
         /// Amplitude cumulée, sur une étape, au-delà de laquelle une direction
         /// de swipe devient candidate.
         public var swipeThreshold: Double = 16
+        /// **Diagonale** : le mouvement se lit comme un quart d'un seul
+        /// geste quand l'axe secondaire atteint cette fraction de l'axe
+        /// principal. tan 30° : entre 30° et 60°, c'est une diagonale ; plus
+        /// près d'un axe, c'est une moitié. Au-delà de 1, plus aucune
+        /// diagonale.
+        public var diagonalRatio: Double = 0.577
         /// Même chose pour le pincement, en magnitude relative à l'étape.
         public var pinchThreshold: Double = 0.1
         /// Immobilité qui valide l'étape en cours et permet d'en enchaîner une
@@ -340,18 +346,29 @@ public struct GestureStateMachine: Sendable {
         t.accY += dy
         t.lastMovementAt = now
         t.candidate = max(abs(t.accX), abs(t.accY)) >= configuration.swipeThreshold
-            ? Self.direction(dx: t.accX, dy: t.accY)
+            ? Self.direction(dx: t.accX, dy: t.accY, diagonalRatio: configuration.diagonalRatio)
             : nil
     }
 
     /// Conventions de signe de `NSEvent.scrollWheel`, confirmées sur le
     /// trackpad : `dx < 0` = gauche, `dy > 0` = **bas** (l'inverse de
     /// `GestureClassifier` sur l'axe Y).
-    static func direction(dx: Double, dy: Double) -> SwipeDirection {
-        if abs(dx) > abs(dy) {
-            return dx < 0 ? .left : .right
+    ///
+    /// Lu sur le cumul de l'étape, pas sur le dernier événement : le début
+    /// d'une diagonale peut partir droit, la direction se corrige à mesure.
+    static func direction(dx: Double, dy: Double, diagonalRatio: Double) -> SwipeDirection {
+        let horizontal: SwipeDirection = dx < 0 ? .left : .right
+        let vertical: SwipeDirection = dy > 0 ? .down : .up
+        let major = max(abs(dx), abs(dy))
+        if major > 0, min(abs(dx), abs(dy)) >= diagonalRatio * major {
+            switch (horizontal, vertical) {
+            case (.left, .up): return .upLeft
+            case (.right, .up): return .upRight
+            case (.left, _): return .downLeft
+            default: return .downRight
+            }
         }
-        return dy > 0 ? .down : .up
+        return abs(dx) > abs(dy) ? horizontal : vertical
     }
 
     private func preview(swipes steps: [SwipeDirection], on kind: GestureTargetKind) -> Preview? {

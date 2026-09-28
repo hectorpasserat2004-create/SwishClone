@@ -110,4 +110,48 @@ final class GestureSequenceTests: XCTestCase {
     func testLongChainsDoNothingOnADockIcon() {
         XCTAssertNil(GestureSequence.resolve(swipes: [.up, .right, .down], on: .dockApp))
     }
+
+    // MARK: - Diagonales
+
+    func testADiagonalAloneIsItsQuarter() {
+        XCTAssertEqual(GestureSequence.resolve(swipes: [.upLeft]), .topLeftQuarter)
+        XCTAssertEqual(GestureSequence.resolve(swipes: [.upRight]), .topRightQuarter)
+        XCTAssertEqual(GestureSequence.resolve(swipes: [.downLeft]), .bottomLeftQuarter)
+        XCTAssertEqual(GestureSequence.resolve(swipes: [.downRight]), .bottomRightQuarter)
+    }
+
+    func testADiagonalIsNothingOnADockIcon() {
+        XCTAssertNil(GestureSequence.resolve(swipes: [.upRight], on: .dockApp))
+    }
+
+    /// Après une diagonale, les règles d'un quart construit en deux étapes.
+    func testAfterADiagonalTheQuarterRulesApply() {
+        let cases: [(steps: [SwipeDirection], action: GestureAction)] = [
+            ([.upRight, .left], .leftHalf),             // l'horizontale s'inverse : la moitié
+            ([.upRight, .right], .topRightQuarter),     // même sens : rien ne change
+            ([.upRight, .down], .bottomRightQuarter),   // on change de ligne
+            ([.upRight, .up], .topRightQuarter),        // un seul ↑ ne force pas la moitié…
+            ([.upRight, .up, .up], .topHalf),           // … il en faut deux
+            ([.downLeft, .down, .down], .bottomHalf),
+            ([.upRight, .left, .up], .topLeftQuarter),  // la verticale revient
+        ]
+        for (steps, action) in cases {
+            XCTAssertEqual(GestureSequence.resolve(swipes: steps), action, "\(steps)")
+        }
+    }
+
+    /// Une diagonale pose les deux axes, quoi qu'il y ait eu avant.
+    func testADiagonalOverridesWhateverCameBefore() {
+        let cases: [(steps: [SwipeDirection], action: GestureAction)] = [
+            ([.up, .upRight], .topRightQuarter),
+            ([.down, .upLeft], .topLeftQuarter),
+            ([.up, .up, .downRight], .bottomRightQuarter),  // sur une moitié forcée
+            ([.up, .left, .downRight], .bottomRightQuarter), // sur un autre quart
+            ([.upLeft, .downRight], .bottomRightQuarter),
+            ([.left, .right, .upLeft], .topLeftQuarter),     // sur un axe qui oscillait
+        ]
+        for (steps, action) in cases {
+            XCTAssertEqual(GestureSequence.resolve(swipes: steps), action, "\(steps)")
+        }
+    }
 }

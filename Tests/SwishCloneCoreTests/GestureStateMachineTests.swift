@@ -186,8 +186,9 @@ final class GestureStateMachineTests: XCTestCase {
     }
 
     func testWithoutPauseTheGestureStaysOneStep() {
-        // Bas puis droite d'un seul mouvement : une seule étape, dont la
-        // direction dominante l'emporte. C'est la pause qui fait le quart.
+        // Bas puis droite d'un seul mouvement : une seule étape, lue sur le
+        // cumul (60, 30). ≈ 27° : trop plat pour une diagonale, la direction
+        // dominante l'emporte. Sans diagonale, c'est la pause qui fait le quart.
         var driver = Driver()
         driver.scroll(.began)
         driver.move(dy: 30)
@@ -195,6 +196,66 @@ final class GestureStateMachineTests: XCTestCase {
         driver.scroll(.ended)
         XCTAssertEqual(driver.commits, [.rightHalf])
         XCTAssertEqual(driver.haptics, [])
+    }
+
+    // MARK: - Diagonales : le quart d'un seul mouvement
+
+    func testADiagonalSwipeSnapsToItsQuarterWithoutPause() {
+        let cases: [(dx: Double, dy: Double, action: GestureAction)] = [
+            (-40, -40, .topLeftQuarter), // dy < 0 = haut
+            (40, -40, .topRightQuarter),
+            (-40, 40, .bottomLeftQuarter),
+            (40, 40, .bottomRightQuarter),
+        ]
+        for (dx, dy, action) in cases {
+            var driver = Driver()
+            driver.scroll(.began)
+            driver.move(dx: dx, dy: dy)
+            XCTAssertEqual(driver.previews.last, .action(action), "aperçu dx=\(dx) dy=\(dy)")
+            driver.scroll(.ended)
+            XCTAssertEqual(driver.commits, [action], "dx=\(dx) dy=\(dy)")
+            XCTAssertEqual(driver.haptics, [], "aucune étape validée : pas de pause")
+        }
+    }
+
+    /// 30° et 60° : les bords de la zone diagonale.
+    func testTheDiagonalZoneSpansThirtyToSixtyDegrees() {
+        func action(dx: Double, dy: Double) -> [GestureAction] {
+            var driver = Driver()
+            driver.swipe(dx: dx, dy: dy)
+            return driver.commits
+        }
+        XCTAssertEqual(action(dx: 40, dy: -22), [.rightHalf], "≈ 29° : une moitié")
+        XCTAssertEqual(action(dx: 40, dy: -24), [.topRightQuarter], "≈ 31° : une diagonale")
+        XCTAssertEqual(action(dx: 22, dy: -40), [.maximize], "≈ 61° : une moitié (↑)")
+        XCTAssertEqual(action(dx: 24, dy: -40), [.topRightQuarter], "≈ 59° : une diagonale")
+    }
+
+    func testDiagonalsCanBeTurnedOff() {
+        var driver = Driver { $0.diagonalRatio = 1.01 }
+        driver.swipe(dx: 40, dy: 39)
+        XCTAssertEqual(driver.commits, [.rightHalf])
+    }
+
+    func testADiagonalStepThenLeftFallsBackToTheLeftHalf() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.move(dx: 40, dy: -40)
+        driver.wait(0.35)
+        XCTAssertEqual(driver.haptics, [.step], "la diagonale est une étape comme une autre")
+        driver.move(dx: -40)
+        XCTAssertEqual(driver.previews.last, .action(.leftHalf))
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [.leftHalf])
+    }
+
+    func testADisabledQuarterDisablesItsDiagonal() {
+        var driver = Driver { $0.disabledActions = [.topRightQuarter] }
+        driver.scroll(.began)
+        driver.move(dx: 40, dy: -40)
+        XCTAssertEqual(driver.previews.last, .unrecognized)
+        driver.scroll(.ended)
+        XCTAssertEqual(driver.commits, [])
     }
 
     func testUnknownSequenceIsPreviewedAsSuchAndDoesNothing() {

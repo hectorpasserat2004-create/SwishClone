@@ -24,9 +24,15 @@ final class GestureCatalogTests: XCTestCase {
                        "seul « centrer » n'a pas encore de geste")
     }
 
-    func testQuartersListBothOrders() {
-        for action: GestureAction in [.topLeftQuarter, .topRightQuarter, .bottomLeftQuarter, .bottomRightQuarter] {
-            XCTAssertEqual(GestureCatalog.entry(for: action)?.triggers.count, 2, "\(action)")
+    func testQuartersListBothOrdersAndTheirDiagonal() {
+        let diagonals: [GestureAction: SwipeDirection] = [
+            .topLeftQuarter: .upLeft, .topRightQuarter: .upRight,
+            .bottomLeftQuarter: .downLeft, .bottomRightQuarter: .downRight,
+        ]
+        for (action, diagonal) in diagonals {
+            let triggers = GestureCatalog.entry(for: action)?.triggers ?? []
+            XCTAssertEqual(triggers.count, 3, "\(action)")
+            XCTAssertEqual(triggers.last, .swipes([diagonal]), "\(action)")
         }
     }
 
@@ -42,6 +48,10 @@ final class GestureCatalogTests: XCTestCase {
         XCTAssertEqual(GestureTrigger.swipes([.left]).symbols, "←")
         XCTAssertEqual(GestureTrigger.swipes([.up, .up]).symbols, "↑↑")
         XCTAssertEqual(GestureTrigger.swipes([.down, .right]).symbols, "↓ puis →")
+        XCTAssertEqual(GestureTrigger.swipes([.upLeft]).symbols, "↖")
+        XCTAssertEqual(GestureTrigger.swipes([.upRight]).symbols, "↗")
+        XCTAssertEqual(GestureTrigger.swipes([.downLeft]).symbols, "↙")
+        XCTAssertEqual(GestureTrigger.swipes([.downRight]).symbols, "↘")
         XCTAssertEqual(GestureTrigger.pinches([.out]).symbols, "Écarter")
         XCTAssertEqual(GestureTrigger.pinches([.in_]).symbols, "Resserrer")
     }
