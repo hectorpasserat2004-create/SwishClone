@@ -132,27 +132,27 @@ final class GestureStateMachineTests: XCTestCase {
 
     func testBelowThresholdDoesNothing() {
         var driver = Driver()
-        driver.swipe(dx: -9)
+        driver.swipe(dx: -4)
         XCTAssertEqual(driver.commits, [])
         XCTAssertEqual(driver.previews, [], "aucun aperçu sans direction candidate")
     }
 
-    /// Les seuils par défaut, là où ils basculent : 10 pour le glissement,
-    /// 0,08 pour le pincement.
-    func testDefaultThresholdsSitAtTenAndEightHundredths() {
+    /// Les seuils par défaut, là où ils basculent : 5 pour le glissement,
+    /// 0,02 pour le pincement.
+    func testDefaultThresholdsSitAtFiveAndTwoHundredths() {
         var swipe = Driver()
-        swipe.swipe(dx: -10)
-        XCTAssertEqual(swipe.commits, [.leftHalf], "10 : le seuil est atteint")
+        swipe.swipe(dx: -5)
+        XCTAssertEqual(swipe.commits, [.leftHalf], "5 : le seuil est atteint")
 
         var weakPinch = Driver()
-        weakPinch.pinch(to: [0.03, 0.075])
+        weakPinch.pinch(to: [0.01, 0.017])
         weakPinch.wait(0.2)
-        XCTAssertEqual(weakPinch.commits, [], "0,075 : sous le seuil")
+        XCTAssertEqual(weakPinch.commits, [], "0,017 : sous le seuil")
 
         var pinch = Driver()
-        pinch.pinch(to: [0.03, 0.085])
+        pinch.pinch(to: [0.01, 0.023])
         pinch.wait(0.2)
-        XCTAssertEqual(pinch.commits, [.toggleFullScreen], "0,085 : au-dessus")
+        XCTAssertEqual(pinch.commits, [.toggleFullScreen], "0,023 : au-dessus")
     }
 
     // MARK: - Enchaînement sans lever les doigts
@@ -635,7 +635,7 @@ final class GestureStateMachineTests: XCTestCase {
         driver.scroll(.began)
         XCTAssertEqual(driver.machine.nextDeadline!, driver.now + 0.8, accuracy: 1e-9)
         driver.move(dx: 40)
-        XCTAssertEqual(driver.machine.nextDeadline!, driver.now + 0.2, accuracy: 1e-9)
+        XCTAssertEqual(driver.machine.nextDeadline!, driver.now + 0.15, accuracy: 1e-9)
     }
 
     /// Un hôte réveillé pile à l'échéance, avec une horloge loin de 0 comme
@@ -673,14 +673,14 @@ final class GestureStateMachineTests: XCTestCase {
         }
     }
 
-    func testAFifthOfASecondValidatesAStep() {
+    func testFifteenHundredthsValidateAStep() {
         var driver = Driver()
         driver.scroll(.began)
         driver.move(dy: -40)
-        driver.wait(0.19)
+        driver.wait(0.14)
         XCTAssertEqual(driver.haptics, [], "pas encore")
         driver.wait(0.02)
-        XCTAssertEqual(driver.haptics, [.step], "0,2 s d'immobilité valident l'étape")
+        XCTAssertEqual(driver.haptics, [.step], "0,15 s d'immobilité valident l'étape")
         driver.move(dy: -40)
         driver.scroll(.ended)
         XCTAssertEqual(driver.commits, [.topHalf])

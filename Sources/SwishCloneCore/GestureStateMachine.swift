@@ -44,9 +44,9 @@ public struct GestureStateMachine: Sendable {
         /// sur une cible, le geste n'y est plus capturé du tout.
         public var disabledActions: Set<GestureAction> = []
         /// Amplitude cumulée, sur une étape, au-delà de laquelle une direction
-        /// de swipe devient candidate. 10 plutôt que 16 : les essais réels
-        /// ont tous fini vers 10 en réglant le curseur.
-        public var swipeThreshold: Double = 10
+        /// de swipe devient candidate. 5 : au minimum des curseurs, c'est
+        /// ce qui s'est révélé le plus maniable à l'usage (16 au départ).
+        public var swipeThreshold: Double = 5
         /// **Diagonale** : le mouvement se lit comme un quart d'un seul
         /// geste quand l'axe secondaire atteint cette fraction de l'axe
         /// principal. tan 30° : entre 30° et 60°, c'est une diagonale ; plus
@@ -54,13 +54,13 @@ public struct GestureStateMachine: Sendable {
         /// diagonale.
         public var diagonalRatio: Double = 0.577
         /// Même chose pour le pincement, en magnitude relative à l'étape.
-        /// 0,08 plutôt que 0,1, pour la même raison.
-        public var pinchThreshold: Double = 0.08
+        /// 0,02, pour la même raison (0,1 au départ).
+        public var pinchThreshold: Double = 0.02
         /// Immobilité qui valide l'étape en cours et permet d'en enchaîner une
-        /// autre sans lever les doigts. 0,2 s depuis que les diagonales font
+        /// autre sans lever les doigts. 0,15 s depuis que les diagonales font
         /// les quarts sans pause : il ne reste à l'attendre que pour ↑↑, ↓↓
         /// et les changements d'avis (0,3 s paraissait longue).
-        public var stepPause: TimeInterval = 0.2
+        public var stepPause: TimeInterval = 0.15
         /// Immobilité qui annule le geste.
         public var cancelTimeout: TimeInterval = 0.8
         /// Silence qui vaut « doigts levés » pour un pincement sans phase.
@@ -533,8 +533,9 @@ public struct GestureStateMachine: Sendable {
             }
 
         case var .pinch(p):
-            // Sans phase, le silence est le lever — et il arrive avant toute
-            // pause d'étape, puisque `pinchSessionGap` < `stepPause`.
+            // Sans phase, le silence est le lever — et il est traité avant
+            // toute pause d'étape : `pinchSessionGap` ≤ `stepPause`, et à
+            // égalité c'est ce test-ci qui passe en premier.
             if p.usesPhase == false, now >= p.lastEventAt + configuration.pinchSessionGap {
                 finishPinch(p, effects: &effects)
                 return
