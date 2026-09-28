@@ -49,8 +49,17 @@ public enum ScreenGeometry {
 /// barre de menus ni le Dock), en coordonnées AX.
 public enum WindowLayout {
 
-    /// Fraction de l'écran occupée par `centerReduced`.
+    /// Fraction de l'écran occupée par `centerReduced`, par défaut.
     public static let reducedScale: CGFloat = 0.6
+
+    /// Les bornes du réglage : en dessous de 10 %, la fenêtre ne serait plus
+    /// qu'un timbre-poste ; au-delà de 100 %, elle déborderait.
+    public static let centerScaleRange: ClosedRange<Double> = 0.1 ... 1
+
+    /// Une taille réglée, ramenée dans ses bornes.
+    public static func clampedCenterScale(_ scale: Double) -> Double {
+        min(max(scale, centerScaleRange.lowerBound), centerScaleRange.upperBound)
+    }
 
     /// `nil` pour les actions qui ne sont pas un cadre (réduire, plein écran
     /// natif, fermer) : `WindowController` les traite à part.
@@ -60,7 +69,13 @@ public enum WindowLayout {
     /// leur côté (TextEdit prend 403 et dépasse d'un point vers le Dock), et
     /// les deux moitiés ne se touchaient plus exactement. La première moitié
     /// prend l'arrondi inférieur, la seconde le reste.
-    public static func frame(for action: GestureAction, in visible: CGRect) -> CGRect? {
+    /// - Parameter centerScale: la fraction de l'écran que prend
+    ///   `centerReduced` (bornée à `centerScaleRange`).
+    public static func frame(
+        for action: GestureAction,
+        in visible: CGRect,
+        centerScale: Double = Double(reducedScale)
+    ) -> CGRect? {
         let left = visible.minX
         let right = (visible.minX + visible.width / 2).rounded(.down)
         let top = visible.minY
@@ -90,8 +105,9 @@ public enum WindowLayout {
         case .maximize:
             return visible
         case .centerReduced:
-            let width = visible.width * reducedScale
-            let height = visible.height * reducedScale
+            let scale = CGFloat(clampedCenterScale(centerScale))
+            let width = visible.width * scale
+            let height = visible.height * scale
             return CGRect(
                 x: visible.midX - width / 2,
                 y: visible.midY - height / 2,

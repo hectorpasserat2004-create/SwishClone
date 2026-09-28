@@ -117,6 +117,15 @@ struct SettingsView: View {
                         range: 0.05...0.5,
                         display: String(format: "%.2f s", settings.animationDuration)
                     )
+                    sliderRow(
+                        "Fenêtre centrée",
+                        value: $settings.centerScale,
+                        range: 0.1...1,
+                        display: String(format: "%.0f %%", settings.centerScale * 100)
+                    )
+                    Text("La taille que prend une fenêtre touchée deux fois à deux doigts, en part de l'écran.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                 case .about:
                     LabeledContent("Application", value: "SwishClone")

@@ -33,6 +33,7 @@ public final class GestureSettings: ObservableObject {
         static let hapticsEnabled = "com.swishclone.hapticsEnabled"
         static let linkedResizeEnabled = "com.swishclone.linkedResizeEnabled"
         static let disabledActions = "com.swishclone.disabledActions"
+        static let centerScale = "com.swishclone.centerScale"
     }
 
     /// Somme cumulée de scroll en dessous de laquelle un swipe est ignoré.
@@ -100,6 +101,17 @@ public final class GestureSettings: ObservableObject {
         didSet { defaults.set(Self.encode(disabledActions), forKey: Key.disabledActions) }
     }
 
+    /// **La taille de la fenêtre centrée** (toucher deux fois), en fraction
+    /// de la zone utile de l'écran : 0,6 = 60 %. Bornée à
+    /// `WindowLayout.centerScaleRange`.
+    @Published public var centerScale: Double {
+        didSet {
+            let clamped = WindowLayout.clampedCenterScale(centerScale)
+            if clamped != centerScale { centerScale = clamped; return }
+            defaults.set(centerScale, forKey: Key.centerScale)
+        }
+    }
+
     public func isEnabled(_ action: GestureAction) -> Bool {
         disabledActions.contains(action) == false
     }
@@ -156,5 +168,8 @@ public final class GestureSettings: ObservableObject {
         hapticsEnabled = defaults.object(forKey: Key.hapticsEnabled) as? Bool ?? true
         linkedResizeEnabled = defaults.object(forKey: Key.linkedResizeEnabled) as? Bool ?? false
         disabledActions = Self.decode(defaults.object(forKey: Key.disabledActions))
+        centerScale = WindowLayout.clampedCenterScale(
+            defaults.object(forKey: Key.centerScale) as? Double ?? Double(WindowLayout.reducedScale)
+        )
     }
 }

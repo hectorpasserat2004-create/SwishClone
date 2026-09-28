@@ -278,7 +278,8 @@ public enum WindowController {
         default:
             guard let current = frame(of: window),
                   let screen = screen(forWindowAt: current),
-                  let theoretical = WindowLayout.frame(for: action, in: screen.visible) else {
+                  let theoretical = WindowLayout.frame(for: action, in: screen.visible,
+                                                       centerScale: GestureSettings.shared.centerScale) else {
                 debugLog("action \(action) impossible : cadre ou écran introuvable")
                 return
             }

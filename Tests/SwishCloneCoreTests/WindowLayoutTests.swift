@@ -128,6 +128,31 @@ final class WindowLayoutTests: XCTestCase {
             XCTAssertTrue(visible.contains(result!), "\(action) déborde : \(result!)")
         }
     }
+
+    // MARK: - Taille de la fenêtre centrée
+
+    func testCenterScaleSetsTheCenteredSize() {
+        let visible = CGRect(x: 0, y: 25, width: 1000, height: 800)
+        XCTAssertEqual(WindowLayout.frame(for: .centerReduced, in: visible),
+                       CGRect(x: 200, y: 185, width: 600, height: 480), "60 % par défaut")
+        XCTAssertEqual(WindowLayout.frame(for: .centerReduced, in: visible, centerScale: 0.8),
+                       CGRect(x: 100, y: 105, width: 800, height: 640))
+        XCTAssertEqual(WindowLayout.frame(for: .centerReduced, in: visible, centerScale: 1), visible)
+    }
+
+    func testCenterScaleIsClampedBetweenTenAndOneHundredPercent() {
+        let visible = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        XCTAssertEqual(WindowLayout.frame(for: .centerReduced, in: visible, centerScale: 0.02)?.width, 100)
+        XCTAssertEqual(WindowLayout.frame(for: .centerReduced, in: visible, centerScale: 3)?.width, 1000)
+        XCTAssertEqual(WindowLayout.clampedCenterScale(0.1), 0.1)
+        XCTAssertEqual(WindowLayout.clampedCenterScale(1), 1)
+    }
+
+    func testCenterScaleOnlyAffectsCentering() {
+        let visible = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        XCTAssertEqual(WindowLayout.frame(for: .leftHalf, in: visible, centerScale: 0.3),
+                       WindowLayout.frame(for: .leftHalf, in: visible))
+    }
 }
 
 final class OverflowCorrectionTests: XCTestCase {
