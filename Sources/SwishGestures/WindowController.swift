@@ -271,9 +271,9 @@ public enum WindowController {
         case .close:
             pressCloseButton(of: window)
 
-        case .quitApp:
+        case .quitApp, .quitWindowApp:
             // Une action d'app, pas de fenêtre : `AppController.quit`.
-            debugLog("quitApp reçu par WindowController — ignoré")
+            debugLog("\(action) reçu par WindowController — ignoré")
 
         default:
             guard let current = frame(of: window),

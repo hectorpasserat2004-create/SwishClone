@@ -2,12 +2,16 @@
 /// lever les doigts.
 public enum GestureTrigger: Equatable, Sendable {
     case swipes([SwipeDirection])
+    /// Des pincements entiers, doigts levés entre deux.
     case pinches([PinchDirection])
+    /// Deux doigts qui touchent deux fois (le « zoom intelligent » de macOS).
+    case doubleTap
 
     public var family: GestureSequence.Family {
         switch self {
         case .swipes: return .swipe
         case .pinches: return .pinch
+        case .doubleTap: return .tap
         }
     }
 
@@ -21,7 +25,11 @@ public enum GestureTrigger: Equatable, Sendable {
             if Set(arrows).count == 1 { return arrows.joined() }
             return arrows.joined(separator: " puis ")
         case let .pinches(steps):
-            return steps.map { $0 == .out ? "Écarter" : "Resserrer" }.joined(separator: " puis ")
+            let words = steps.map { $0 == .out ? "Écarter" : "Resserrer" }
+            if words.count == 2, Set(words).count == 1 { return "\(words[0]) deux fois" }
+            return words.joined(separator: " puis ")
+        case .doubleTap:
+            return "Toucher deux fois"
         }
     }
 }
@@ -62,8 +70,7 @@ public enum GestureCatalog {
         public var family: GestureSequence.Family { triggers[0].family }
     }
 
-    /// Dans l'ordre où un hôte les présenterait. `centerReduced` n'y est pas :
-    /// aucun geste n'y mène aujourd'hui.
+    /// Dans l'ordre où un hôte les présenterait.
     public static let entries: [Entry] = [
         Entry(action: .leftHalf, target: .titlebar, triggers: [.swipes([.left])]),
         Entry(action: .rightHalf, target: .titlebar, triggers: [.swipes([.right])]),
@@ -77,6 +84,8 @@ public enum GestureCatalog {
         Entry(action: .bottomRightQuarter, target: .titlebar, triggers: [.swipes([.downRight]), .swipes([.down, .right]), .swipes([.right, .down])]),
         Entry(action: .toggleFullScreen, target: .titlebar, triggers: [.pinches([.out])]),
         Entry(action: .close, target: .titlebar, triggers: [.pinches([.in_])]),
+        Entry(action: .quitWindowApp, target: .titlebar, triggers: [.pinches([.in_, .in_])]),
+        Entry(action: .centerReduced, target: .titlebar, triggers: [.doubleTap]),
         Entry(action: .quitApp, target: .dockApp, triggers: [.pinches([.in_])]),
     ]
 

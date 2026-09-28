@@ -65,6 +65,14 @@ private final class Harness {
         time = end
     }
 
+    /// Un pincement entier, avec phase.
+    func pinchIn() {
+        for (magnitude, phase) in [(-0.01, GestureStateMachine.Phase.began), (-0.12, .changed), (-0.12, .ended)] {
+            time += 0.01
+            engine.process(.magnify(cumulative: magnitude, phase: phase), at: cursor)
+        }
+    }
+
     /// ↑, pause (étape validée), →, lever : un quart en haut à droite.
     func topRightQuarter() {
         scroll(.began)
@@ -198,5 +206,24 @@ final class CallbackMetricsTests: XCTestCase {
         XCTAssertEqual(metrics.count, 3)
         XCTAssertEqual(metrics.maxNanoseconds, 30_000)
         XCTAssertEqual(metrics.summary, "3 callbacks, moyenne 20 µs, max 30 µs")
+    }
+
+    /// Une échéance dépassée part avec la cible d'alors : la fermeture qui
+    /// attendait un second pincement ne doit pas viser la fenêtre du geste
+    /// suivant.
+    func testALateDeadlineIsDeliveredWithItsOwnTarget() {
+        let h = Harness()
+        let first = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let second = CGRect(x: 900, y: 0, width: 400, height: 300)
+        h.target = .window(AXUIElementCreateSystemWide(), frame: first)
+        h.pinchIn()
+        h.time += 0.5 // l'hôte n'a pas envoyé de tick
+        h.target = .window(AXUIElementCreateSystemWide(), frame: second)
+        h.engine.process(.magnify(cumulative: -0.01, phase: .began), at: h.cursor)
+
+        let close = h.deliveries.first { $0.effects.contains(.commit(.close)) }
+        guard case let .window(_, frame)? = close?.target else { return XCTFail("la fermeture doit partir") }
+        XCTAssertEqual(frame, first, "vers la fenêtre du premier pincement")
+        XCTAssertEqual(h.hitTests.count, 2, "le nouveau pincement a bien sa propre cible")
     }
 }

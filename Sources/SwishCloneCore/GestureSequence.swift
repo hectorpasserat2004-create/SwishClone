@@ -8,6 +8,8 @@ public enum GestureSequence {
 
     public enum Family: Equatable, Sendable {
         case swipe, pinch
+        /// Toucher du bout de deux doigts, sans glisser.
+        case tap
     }
 
     /// Une famille de gestes a-t-elle au moins une action **active** sur
@@ -117,16 +119,24 @@ public enum GestureSequence {
         }
     }
 
+    /// Chaque étape est ici un pincement entier, doigts levés entre deux :
+    /// `[.in_, .in_]`, c'est resserrer, lever, resserrer à nouveau dans
+    /// `doublePinchInterval`.
     public static func resolve(pinches steps: [PinchDirection], on kind: GestureTargetKind = .titlebar) -> GestureAction? {
         switch (kind, steps) {
         case (.titlebar, [.out]): return .toggleFullScreen
-        // Comme Swish : resserrer ferme. Resserrer deux fois (quitter l'app)
-        // attend le P1, et une phase de pincement lisible.
+        // Comme Swish : resserrer ferme, resserrer deux fois quitte l'app.
         case (.titlebar, [.in_]): return .close
+        case (.titlebar, [.in_, .in_]): return .quitWindowApp
         // Sur une icône du Dock, resserrer quitte l'app (Swish, onglet Apps).
         // Écarter (nouvelle fenêtre, chez Swish) viendra plus tard.
         case (.dockApp, [.in_]): return .quitApp
         default: return nil
         }
+    }
+
+    /// Deux doigts qui touchent deux fois, sans glisser.
+    public static func resolveDoubleTap(on kind: GestureTargetKind = .titlebar) -> GestureAction? {
+        kind == .titlebar ? .centerReduced : nil
     }
 }

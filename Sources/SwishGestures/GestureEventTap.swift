@@ -71,12 +71,17 @@ final class GestureTapRunner: @unchecked Sendable {
     // - Le champ **113** porte la magnitude **cumulative** depuis le début
     //   du pincement, lue par `getDoubleValueField` (la lecture validée sur
     //   un vrai pinch out) : positive en écartant, négative en resserrant.
+    // - Sous-type **22** : le « zoom intelligent » (deux doigts qui touchent
+    //   deux fois), un seul événement, sans clic droit (sonde du 27/09/2026).
+    // - La **phase** d'un pincement (début, fin) se lit par `NSEvent` : type
+    //   30, phases began/changed/ended relevées sur le même essai.
     //
     // Rien de tout ça n'est garanti stable d'une version de macOS à l'autre.
 
     fileprivate static let gestureEventTypeRawValue: UInt32 = 29
     private static let subtypeFieldRawValue: UInt32 = 110
     private static let magnifySubtype: Int64 = 8
+    private static let smartMagnifySubtype: Int64 = 22
     private static let magnitudeFieldRawValue: UInt32 = 113
     private static let escapeKeyCode: Int64 = 53
 
@@ -265,23 +270,19 @@ final class GestureTapRunner: @unchecked Sendable {
 
     private func handleGestureEvent(_ event: CGEvent) -> GestureStateMachine.Disposition {
         let subtypeField = unsafeBitCast(Self.subtypeFieldRawValue, to: CGEventField.self)
-        let isMagnify = timed(.decode) { event.getIntegerValueField(subtypeField) == Self.magnifySubtype }
-        guard isMagnify else { return .pass }
+        let subtype = timed(.decode) { event.getIntegerValueField(subtypeField) }
+        if subtype == Self.smartMagnifySubtype {
+            return process(.smartMagnify, at: event.location)
+        }
+        guard subtype == Self.magnifySubtype else { return .pass }
 
         let magnitudeField = unsafeBitCast(Self.magnitudeFieldRawValue, to: CGEventField.self)
         let magnitude = timed(.decode) { event.getDoubleValueField(magnitudeField) }
+        // La phase donne le lever exact. Sans elle (`nil`), la machine
+        // retombe sur le silence de `pinchSessionGap`.
+        let phase = timed(.decode) { NSEvent(cgEvent: event).flatMap { Self.phase($0.phase) } }
 
-        // Diagnostic pour le P1 (pincer deux fois) : la machine ne peut
-        // enchaîner des étapes de pincement que si l'événement porte une
-        // phase. On relève ce que `NSEvent` en dit, sans encore s'en servir
-        // — la fin du pincement reste détectée par le silence de 150 ms.
-        timed(.diagnostics) {
-            if GestureClassifier.debugLoggingEnabled, let ns = NSEvent(cgEvent: event) {
-                print("[GestureEventTap] magnify NSEvent : type=\(ns.type.rawValue) phase=\(ns.phase.rawValue)")
-            }
-        }
-
-        return process(.magnify(cumulative: magnitude, phase: nil), at: event.location)
+        return process(.magnify(cumulative: magnitude, phase: phase), at: event.location)
     }
 
     fileprivate func handleKey(type: CGEventType, event: CGEvent) {

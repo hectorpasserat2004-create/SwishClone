@@ -154,4 +154,18 @@ final class GestureSequenceTests: XCTestCase {
             XCTAssertEqual(GestureSequence.resolve(swipes: steps), action, "\(steps)")
         }
     }
+
+    // MARK: - Pincements et double tap
+
+    func testPinchingTwiceQuitsFromATitlebarOnly() {
+        XCTAssertEqual(GestureSequence.resolve(pinches: [.in_, .in_]), .quitWindowApp)
+        XCTAssertNil(GestureSequence.resolve(pinches: [.in_, .in_], on: .dockApp))
+        XCTAssertNil(GestureSequence.resolve(pinches: [.out, .out]))
+        XCTAssertNil(GestureSequence.resolve(pinches: [.in_, .out]))
+    }
+
+    func testDoubleTapCentersFromATitlebarOnly() {
+        XCTAssertEqual(GestureSequence.resolveDoubleTap(on: .titlebar), .centerReduced)
+        XCTAssertNil(GestureSequence.resolveDoubleTap(on: .dockApp))
+    }
 }

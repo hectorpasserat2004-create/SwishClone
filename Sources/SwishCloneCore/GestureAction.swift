@@ -37,11 +37,15 @@ public enum GestureAction: String, CaseIterable, Equatable, Sendable {
     /// Le bouton rouge, comme un clic : l'app garde la main (un document non
     /// enregistré ouvre sa feuille de dialogue, rien n'est perdu).
     case close
-    /// Fenêtre recentrée à 60 %. Plus associée à aucun geste depuis que le
-    /// pincement ferme la fenêtre ; réservée au double tap (P1).
+    /// Fenêtre recentrée à 60 %, par un double tap à deux doigts.
     case centerReduced
 
     /// Quitter l'app de l'icône du Dock visée, comme ⌘Q : l'app décide
     /// (« Enregistrer ? » compris) et peut refuser.
     case quitApp
+
+    /// Quitter l'app de la fenêtre visée, depuis sa barre de titre (resserrer
+    /// deux fois). Distincte de `quitApp` pour se couper à part : les mêmes
+    /// garde-fous (jamais le Finder, jamais l'hôte, `terminate()` seulement).
+    case quitWindowApp
 }

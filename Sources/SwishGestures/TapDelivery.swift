@@ -34,6 +34,11 @@ enum TapDeliveryHandler {
                 switch (delivery.target, action) {
                 case let (.dockApp(pid, _), .quitApp):
                     AppController.quit(pid: pid)
+                case let (.window(window, _), .quitWindowApp):
+                    var pid: pid_t = 0
+                    if AXUIElementGetPid(window, &pid) == .success {
+                        AppController.quit(pid: pid)
+                    }
                 case (.window, .quitApp), (.dockApp, _), (nil, _):
                     // Impossible par construction de la table : la cible et
                     // l'action viennent du même type de cible.
@@ -50,8 +55,15 @@ enum TapDeliveryHandler {
                 case let .dockApp(pid, name):
                     appName = name
                     appIcon = NSRunningApplication(processIdentifier: pid)?.icon
-                case let .window(_, frame):
+                case let .window(window, frame):
                     targetFrame = frame
+                    // Quitter depuis une fenêtre : l'aperçu montre l'app.
+                    var pid: pid_t = 0
+                    if preview == .action(.quitWindowApp), AXUIElementGetPid(window, &pid) == .success,
+                       let app = NSRunningApplication(processIdentifier: pid) {
+                        appName = app.localizedName
+                        appIcon = app.icon
+                    }
                 case nil:
                     break
                 }

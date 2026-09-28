@@ -72,6 +72,13 @@ final class GestureTapEngine: @unchecked Sendable {
         let current = settings.read()
         machine.configuration = current.machine
 
+        // Une échéance passée d'abord, à part : son action (la fermeture
+        // qui attendait un second pincement…) doit partir vers la cible
+        // d'alors, avant qu'un nouveau test de cible ne la remplace.
+        if let deadline = machine.nextDeadline, now() >= deadline {
+            publish(machine.handle(.tick, at: now()) { nil }.effects, settings: current)
+        }
+
         let output = machine.handle(event, at: now()) { [self] in
             let started = now()
             target = hitTest(location, current.zoneHeight)

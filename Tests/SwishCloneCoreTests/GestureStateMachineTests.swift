@@ -450,7 +450,7 @@ final class GestureStateMachineTests: XCTestCase {
     func testPinchInClosesTheWindow() {
         var driver = Driver()
         driver.pinch(to: [-0.03, -0.08, -0.14])
-        driver.wait(0.2)
+        driver.wait(0.6)
         XCTAssertEqual(driver.commits, [.close])
     }
 
@@ -463,24 +463,27 @@ final class GestureStateMachineTests: XCTestCase {
         XCTAssertEqual(driver.commits, [.toggleFullScreen])
     }
 
-    func testPinchWithPhaseEndsOnEndedAndCanChainSteps() {
+    /// Un pincement n'enchaîne jamais d'étapes sans lever les doigts : en
+    /// relâchant après avoir resserré, les doigts écartent un peu, et
+    /// « resserrer puis écarter » ne fermerait plus rien.
+    func testAPinchNeverChainsStepsEvenWithAPause() {
         var driver = Driver()
         driver.pinch(to: [-0.05, -0.12], phase: .changed)
         driver.wait(0.35)
-        XCTAssertEqual(driver.haptics, [.step], "avec la phase, une pause valide l'étape")
-        driver.pinch(to: [-0.18, -0.26], phase: .changed)
-        XCTAssertEqual(driver.previews.last, .unrecognized, "« resserrer ×2 » n'a pas encore d'action (P1 : quitter)")
-        driver.send(.magnify(cumulative: -0.26, phase: .ended))
-        XCTAssertEqual(driver.commits, [])
+        XCTAssertEqual(driver.haptics, [], "une pause ne valide pas d'étape")
+        driver.pinch(to: [-0.08, -0.05], phase: .changed) // les doigts se relâchent
+        XCTAssertEqual(driver.previews.last, .action(.close))
+        driver.send(.magnify(cumulative: -0.05, phase: .ended))
+        driver.wait(0.5)
+        XCTAssertEqual(driver.commits, [.close])
     }
 
-    func testPinchWithoutPhaseCannotChain() {
-        // Sans phase, le silence de 150 ms vaut lever — il arrive avant la
-        // pause d'étape de 300 ms. Le double pincement exigera la phase.
+    func testPinchWithoutPhaseEndsOnTheSilenceThenWaitsForASecond() {
         var driver = Driver()
         driver.pinch(to: [-0.05, -0.12])
-        driver.wait(0.35)
-        XCTAssertEqual(driver.haptics, [])
+        driver.wait(0.15 + 0.39)
+        XCTAssertEqual(driver.commits, [], "silence de 0,15 s, puis 0,4 s d'attente")
+        driver.wait(0.02)
         XCTAssertEqual(driver.commits, [.close])
     }
 
@@ -508,8 +511,158 @@ final class GestureStateMachineTests: XCTestCase {
         driver.now += 0.5 // sans tick
         driver.send(.magnify(cumulative: -0.05, phase: nil), after: 0)
         driver.pinch(to: [-0.15])
-        driver.wait(0.2)
+        driver.wait(0.6)
         XCTAssertEqual(driver.commits, [.toggleFullScreen, .close])
+    }
+
+    // MARK: - Resserrer deux fois
+
+    /// Un pincement entier, avec phase : resserrer puis lever.
+    private func pinchIn(_ driver: inout Driver, to peak: Double = -0.12) {
+        driver.send(.magnify(cumulative: -0.01, phase: .began))
+        driver.pinch(to: [peak / 2, peak], phase: .changed)
+        driver.send(.magnify(cumulative: peak, phase: .ended))
+    }
+
+    func testPinchingInTwiceQuitsTheApp() {
+        var driver = Driver()
+        pinchIn(&driver)
+        XCTAssertEqual(driver.commits, [], "fermer attend un éventuel second pincement")
+        XCTAssertEqual(driver.previews.last, .action(.close), "l'aperçu reste affiché pendant l'attente")
+        driver.wait(0.3) // l'écart mesuré entre deux pincements enchaînés
+        pinchIn(&driver)
+        XCTAssertEqual(driver.previews.dropLast().last, .action(.quitWindowApp), "le second annonce « quitter »")
+        XCTAssertEqual(driver.commits, [.quitWindowApp], "quitter, et pas fermer avant")
+        XCTAssertEqual(driver.hitTests, 1, "le second pincement vise la même fenêtre")
+        driver.wait(1)
+        XCTAssertEqual(driver.commits, [.quitWindowApp])
+    }
+
+    func testTheCloseWaitsExactlyTheDoubleInterval() {
+        var driver = Driver()
+        pinchIn(&driver)
+        driver.wait(0.39)
+        XCTAssertEqual(driver.commits, [])
+        driver.wait(0.02)
+        XCTAssertEqual(driver.commits, [.close])
+        XCTAssertEqual(driver.previews.last, .some(nil), "l'aperçu disparaît avec l'action")
+    }
+
+    func testTheIntervalIsASetting() {
+        var driver = Driver { $0.doublePinchInterval = 0.2 }
+        pinchIn(&driver)
+        driver.wait(0.21)
+        XCTAssertEqual(driver.commits, [.close])
+    }
+
+    func testASecondPinchTooLateIsANewGesture() {
+        var driver = Driver()
+        pinchIn(&driver)
+        driver.wait(0.5)
+        pinchIn(&driver)
+        driver.wait(0.5)
+        XCTAssertEqual(driver.commits, [.close, .close])
+        XCTAssertEqual(driver.hitTests, 2)
+    }
+
+    func testASecondPinchThatSpreadsStillCloses() {
+        var driver = Driver()
+        pinchIn(&driver)
+        driver.wait(0.2)
+        driver.send(.magnify(cumulative: 0.01, phase: .began))
+        driver.pinch(to: [0.08, 0.15], phase: .changed)
+        XCTAssertEqual(driver.previews.last, .action(.close), "ce qui partira : la fermeture du premier")
+        driver.send(.magnify(cumulative: 0.15, phase: .ended))
+        XCTAssertEqual(driver.commits, [.close])
+    }
+
+    func testWithQuitDisabledTheCloseIsImmediate() {
+        var driver = Driver { $0.disabledActions = [.quitWindowApp] }
+        pinchIn(&driver)
+        XCTAssertEqual(driver.commits, [.close])
+    }
+
+    func testWithCloseDisabledPinchingTwiceStillQuits() {
+        var driver = Driver { $0.disabledActions = [.close] }
+        pinchIn(&driver)
+        driver.wait(0.2)
+        pinchIn(&driver)
+        XCTAssertEqual(driver.commits, [.quitWindowApp])
+
+        var once = Driver { $0.disabledActions = [.close] }
+        pinchIn(&once)
+        once.wait(1)
+        XCTAssertEqual(once.commits, [], "resserrer une fois : rien")
+    }
+
+    func testASwipeDuringTheWaitClosesFirstAndIsNotTracked() {
+        var driver = Driver()
+        pinchIn(&driver)
+        driver.wait(0.1)
+        driver.scroll(.began)
+        XCTAssertEqual(driver.commits, [.close])
+        XCTAssertEqual(driver.dispositions.last, .pass)
+        XCTAssertEqual(driver.hitTests, 1, "pas de test de cible dans le même appel que la fermeture")
+    }
+
+    func testAHostWokenLateSettlesTheWaitBeforeTheNextPinch() {
+        var driver = Driver()
+        pinchIn(&driver)
+        driver.now += 0.5 // sans tick
+        driver.send(.magnify(cumulative: -0.01, phase: .began), after: 0)
+        XCTAssertEqual(driver.commits, [.close], "trop tard pour un double : la fermeture part")
+        XCTAssertEqual(driver.hitTests, 2, "et ce pincement-ci est un nouveau geste")
+    }
+
+    func testPinchingInTwiceOnADockIconQuitsImmediatelyEachTime() {
+        var driver = Driver()
+        driver.onTarget = .dockApp
+        pinchIn(&driver)
+        XCTAssertEqual(driver.commits, [.quitApp], "pas de double sur le Dock : aucune attente")
+    }
+
+    // MARK: - Toucher deux fois
+
+    func testDoubleTapCentersTheWindow() {
+        var driver = Driver()
+        driver.send(.smartMagnify)
+        XCTAssertEqual(driver.commits, [.centerReduced])
+        XCTAssertEqual(driver.hitTests, 1)
+    }
+
+    func testDoubleTapElsewhereDoesNothing() {
+        var off = Driver()
+        off.onTarget = nil
+        off.send(.smartMagnify)
+        XCTAssertEqual(off.commits, [])
+        XCTAssertEqual(off.dispositions, [.pass], "le zoom intelligent reste à l'app")
+
+        var dock = Driver()
+        dock.onTarget = .dockApp
+        dock.send(.smartMagnify)
+        XCTAssertEqual(dock.commits, [])
+    }
+
+    func testDisabledDoubleTapSkipsTheHitTest() {
+        var driver = Driver { $0.disabledActions = [.centerReduced] }
+        driver.send(.smartMagnify)
+        XCTAssertEqual(driver.commits, [])
+        XCTAssertEqual(driver.hitTests, 0)
+    }
+
+    func testDoubleTapDuringAGestureIsIgnored() {
+        var driver = Driver()
+        driver.scroll(.began)
+        driver.send(.smartMagnify)
+        XCTAssertEqual(driver.commits, [])
+        XCTAssertEqual(driver.hitTests, 1)
+    }
+
+    func testDoubleTapDuringTheWaitClosesInstead() {
+        var driver = Driver()
+        pinchIn(&driver)
+        driver.send(.smartMagnify)
+        XCTAssertEqual(driver.commits, [.close])
     }
 
     // MARK: - Icône du Dock
@@ -545,7 +698,7 @@ final class GestureStateMachineTests: XCTestCase {
     func testTitlebarPinchInStillClosesTheWindow() {
         var driver = Driver()
         driver.pinch(to: [-0.05, -0.14])
-        driver.wait(0.2)
+        driver.wait(0.6)
         XCTAssertEqual(driver.commits, [.close], "la cible décide : fermer une fenêtre, pas quitter l'app")
     }
 

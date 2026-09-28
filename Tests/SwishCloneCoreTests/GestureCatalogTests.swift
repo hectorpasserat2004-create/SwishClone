@@ -11,6 +11,7 @@ final class GestureCatalogTests: XCTestCase {
                 let resolved: GestureAction? = switch trigger {
                 case let .swipes(steps): GestureSequence.resolve(swipes: steps, on: entry.target)
                 case let .pinches(steps): GestureSequence.resolve(pinches: steps, on: entry.target)
+                case .doubleTap: GestureSequence.resolveDoubleTap(on: entry.target)
                 }
                 XCTAssertEqual(resolved, entry.action, "\(trigger) sur \(entry.target)")
             }
@@ -20,8 +21,7 @@ final class GestureCatalogTests: XCTestCase {
     func testEveryActionWithAGestureIsListedOnce() {
         let listed = GestureCatalog.entries.map(\.action)
         XCTAssertEqual(listed.count, Set(listed).count, "une action, une entrée")
-        XCTAssertEqual(Set(listed), Set(GestureAction.allCases).subtracting([.centerReduced]),
-                       "seul « centrer » n'a pas encore de geste")
+        XCTAssertEqual(Set(listed), Set(GestureAction.allCases), "chaque action a son geste")
     }
 
     func testQuartersListBothOrdersAndTheirDiagonal() {
@@ -54,6 +54,10 @@ final class GestureCatalogTests: XCTestCase {
         XCTAssertEqual(GestureTrigger.swipes([.downRight]).symbols, "↘")
         XCTAssertEqual(GestureTrigger.pinches([.out]).symbols, "Écarter")
         XCTAssertEqual(GestureTrigger.pinches([.in_]).symbols, "Resserrer")
+        XCTAssertEqual(GestureTrigger.pinches([.in_, .in_]).symbols, "Resserrer deux fois")
+        XCTAssertEqual(GestureTrigger.pinches([.in_, .out]).symbols, "Resserrer puis Écarter")
+        XCTAssertEqual(GestureTrigger.doubleTap.symbols, "Toucher deux fois")
+        XCTAssertEqual(GestureTrigger.doubleTap.family, .tap)
     }
 
     // MARK: - Ce que la machine capture

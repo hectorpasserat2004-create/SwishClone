@@ -98,7 +98,7 @@ public enum WindowLayout {
                 width: width,
                 height: height
             )
-        case .minimize, .toggleFullScreen, .close, .quitApp:
+        case .minimize, .toggleFullScreen, .close, .quitApp, .quitWindowApp:
             return nil
         }
     }

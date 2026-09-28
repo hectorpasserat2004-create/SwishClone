@@ -12,7 +12,11 @@ import Foundation
 ///
 /// Le pincement suit le même schéma (`pinch`, `pinchCancelled`,
 /// `pinchPassThrough`), avec une fin de geste détectée par la phase quand
-/// l'hôte la fournit, par un silence de `pinchSessionGap` sinon.
+/// l'hôte la fournit, par un silence de `pinchSessionGap` sinon. Il
+/// n'enchaîne pas d'étapes sans lever les doigts ; un pincement qui a un
+/// double (resserrer → resserrer deux fois) passe par
+/// `pinchAwaitingSecond` pendant `doublePinchInterval` avant d'agir. Le
+/// double tap (`smartMagnify`) agit tout de suite.
 ///
 /// Trois règles portent tout le reste :
 ///
@@ -65,6 +69,12 @@ public struct GestureStateMachine: Sendable {
         public var cancelTimeout: TimeInterval = 0.8
         /// Silence qui vaut « doigts levés » pour un pincement sans phase.
         public var pinchSessionGap: TimeInterval = 0.15
+        /// **Resserrer deux fois.** Après un pincement qui a un double
+        /// (resserrer → quitter l'app), le temps laissé pour commencer le
+        /// second, compté depuis le lever. Le premier n'agit qu'ensuite :
+        /// fermer attend d'autant. 0,4 s : deux pincements enchaînés
+        /// naturellement ont été mesurés à 0,30 s l'un de l'autre.
+        public var doublePinchInterval: TimeInterval = 0.4
         /// Faux : la machine suit le geste mais laisse tout passer (l'hôte
         /// peut alors se contenter d'un tap en écoute seule).
         public var blocksEvents = false
@@ -88,6 +98,10 @@ public struct GestureStateMachine: Sendable {
         /// `cumulative` : magnitude depuis le début du pincement (positive en
         /// écartant). `phase` : `nil` si l'hôte ne la connaît pas.
         case magnify(cumulative: Double, phase: Phase?)
+        /// Deux doigts ont touché deux fois : le « zoom intelligent » de
+        /// macOS, qu'il n'envoie que si le réglage Trackpad › Zoom
+        /// intelligent est activé (il l'est par défaut).
+        case smartMagnify
         case escape
         case tick
     }
@@ -165,6 +179,22 @@ public struct GestureStateMachine: Sendable {
         var lastMovementAt: TimeInterval
         var lastEventAt: TimeInterval
         var usesPhase: Bool
+        /// Le second pincement d'un double : il n'en attend pas d'autre.
+        var isSecond = false
+        /// Son repli : l'action du premier, qui part si le second ne mène à
+        /// rien. `nil` si elle est coupée.
+        var fallback: GestureAction?
+    }
+
+    /// Un pincement levé, dont l'action attend de voir si un second suit.
+    private struct PendingPinch: Equatable, Sendable {
+        var kind: GestureTargetKind
+        var steps: [PinchDirection]
+        /// `nil` quand l'action simple est coupée : resserrer une fois ne
+        /// fait alors rien, mais deux fois quitte toujours.
+        var action: GestureAction?
+        var deadline: TimeInterval
+        var usesPhase: Bool
     }
 
     private enum State: Equatable, Sendable {
@@ -175,6 +205,7 @@ public struct GestureStateMachine: Sendable {
         case pinch(PinchTracking)
         case pinchCancelled(lastEventAt: TimeInterval, usesPhase: Bool)
         case pinchPassThrough(lastEventAt: TimeInterval, usesPhase: Bool)
+        case pinchAwaitingSecond(PendingPinch)
     }
 
     /// Un geste est-il suivi (et donc, en mode bloquant, avalé) ?
@@ -197,9 +228,6 @@ public struct GestureStateMachine: Sendable {
             return deadline
         case let .pinch(p):
             var deadline = p.lastMovementAt + configuration.cancelTimeout
-            if p.candidate != nil {
-                deadline = min(deadline, p.lastMovementAt + configuration.stepPause)
-            }
             if p.usesPhase == false {
                 deadline = min(deadline, p.lastEventAt + configuration.pinchSessionGap)
             }
@@ -207,6 +235,8 @@ public struct GestureStateMachine: Sendable {
         case let .pinchCancelled(lastEventAt, usesPhase),
              let .pinchPassThrough(lastEventAt, usesPhase):
             return usesPhase ? nil : lastEventAt + configuration.pinchSessionGap
+        case let .pinchAwaitingSecond(pending):
+            return pending.deadline
         case .idle, .swipeCancelled, .swallowingMomentum:
             return nil
         }
@@ -243,6 +273,8 @@ public struct GestureStateMachine: Sendable {
         case let .magnify(cumulative, phase):
             captured = handleMagnify(cumulative, phase: phase, now: now,
                                      isOnTarget: isOnTarget, effects: &effects)
+        case .smartMagnify:
+            captured = handleSmartMagnify(isOnTarget: isOnTarget, effects: &effects)
         case .escape:
             captured = handleEscape(effects: &effects)
         case .tick:
@@ -265,6 +297,15 @@ public struct GestureStateMachine: Sendable {
         isOnTarget: () -> GestureTargetKind?,
         effects: inout [Effect]
     ) -> Bool {
+        // Un glissé pendant l'attente d'un second pincement : le premier agit
+        // tout de suite, et cet événement-ci n'est pas suivi. Le suivre
+        // demanderait un test de cible dans le même appel, et l'action du
+        // pincement partirait alors vers la nouvelle cible.
+        if case let .pinchAwaitingSecond(pending) = state {
+            settle(pending, effects: &effects)
+            return false
+        }
+
         // L'inertie qui suit un geste capturé est avalée elle aussi : sans ça,
         // la fenêtre fraîchement rangée défilerait toute seule juste après.
         if let momentum {
@@ -394,6 +435,9 @@ public struct GestureStateMachine: Sendable {
         if let deadline = gapDeadline, now >= deadline {
             handleTick(now: deadline, effects: &effects)
         }
+        if case let .pinchAwaitingSecond(pending) = state, now >= pending.deadline {
+            handleTick(now: pending.deadline, effects: &effects)
+        }
 
         let lifted = phase == .ended || phase == .cancelled
 
@@ -403,7 +447,7 @@ public struct GestureStateMachine: Sendable {
             if phase != nil { p.usesPhase = true }
             if lifted {
                 if phase == .ended {
-                    finishPinch(p, effects: &effects)
+                    finishPinch(p, now: now, effects: &effects)
                 } else {
                     abandon(pending: p.steps.isEmpty == false || p.candidate != nil, reason: .interrupted, effects: &effects)
                     state = .idle
@@ -412,7 +456,17 @@ public struct GestureStateMachine: Sendable {
             }
             move(&p, magnitude: magnitude, now: now)
             state = .pinch(p)
-            show(preview(pinches: p.steps + [p.candidate].compactMap { $0 }, on: p.kind), effects: &effects)
+            show(preview(p), effects: &effects)
+            return true
+
+        case let .pinchAwaitingSecond(pending):
+            // Le second pincement, sur la même cible : pas de nouveau test.
+            guard lifted == false else { return true }
+            var p = PinchTracking(kind: pending.kind, steps: pending.steps, lastMovementAt: now, lastEventAt: now,
+                                  usesPhase: pending.usesPhase || phase != nil, isSecond: true, fallback: pending.action)
+            move(&p, magnitude: magnitude, now: now)
+            state = .pinch(p)
+            show(preview(p), effects: &effects)
             return true
 
         case let .pinchCancelled(_, usesPhase):
@@ -437,7 +491,7 @@ public struct GestureStateMachine: Sendable {
             var p = PinchTracking(kind: kind, lastMovementAt: now, lastEventAt: now, usesPhase: phase != nil)
             move(&p, magnitude: magnitude, now: now)
             state = .pinch(p)
-            show(preview(pinches: p.steps + [p.candidate].compactMap { $0 }, on: p.kind), effects: &effects)
+            show(preview(p), effects: &effects)
             return true
         }
     }
@@ -454,12 +508,28 @@ public struct GestureStateMachine: Sendable {
             : nil
     }
 
-    private mutating func finishPinch(_ p: PinchTracking, effects: inout [Effect]) {
-        show(nil, effects: &effects)
+    /// Le lever d'un pincement. S'il a un double actif (resserrer, puis
+    /// resserrer encore), son action attend `doublePinchInterval`, aperçu
+    /// affiché ; sinon, elle part tout de suite.
+    private mutating func finishPinch(_ p: PinchTracking, now: TimeInterval, effects: inout [Effect]) {
         let steps = p.steps + [p.candidate].compactMap { $0 }
-        if let action = enabledAction(pinches: steps, on: p.kind) {
-            effects.append(.commit(action))
+        let action = enabledAction(pinches: steps, on: p.kind) ?? p.fallback
+        if p.isSecond == false, steps.isEmpty == false, enabledAction(pinches: steps + steps, on: p.kind) != nil {
+            state = .pinchAwaitingSecond(PendingPinch(
+                kind: p.kind, steps: steps, action: action,
+                deadline: now + configuration.doublePinchInterval, usesPhase: p.usesPhase
+            ))
+            return
         }
+        show(nil, effects: &effects)
+        if let action { effects.append(.commit(action)) }
+        state = .idle
+    }
+
+    /// L'attente est finie (ou interrompue) : l'action du premier pincement.
+    private mutating func settle(_ pending: PendingPinch, effects: inout [Effect]) {
+        show(nil, effects: &effects)
+        if let action = pending.action { effects.append(.commit(action)) }
         state = .idle
     }
 
@@ -477,9 +547,33 @@ public struct GestureStateMachine: Sendable {
         configuration.disabledActions.contains(action) ? nil : action
     }
 
-    private func preview(pinches steps: [PinchDirection], on kind: GestureTargetKind) -> Preview? {
-        guard steps.isEmpty == false else { return nil }
-        return enabledAction(pinches: steps, on: kind).map(Preview.action) ?? .unrecognized
+    /// Pendant le second pincement d'un double, ce qui ne mène à rien
+    /// montre l'action du premier : c'est elle qui partira.
+    private func preview(_ p: PinchTracking) -> Preview? {
+        let steps = p.steps + [p.candidate].compactMap { $0 }
+        if let action = enabledAction(pinches: steps, on: p.kind) ?? p.fallback { return .action(action) }
+        return steps.isEmpty ? nil : .unrecognized
+    }
+
+    // MARK: - Double tap
+
+    /// Une action immédiate : le double tap n'a ni étape ni lever à attendre.
+    private mutating func handleSmartMagnify(
+        isOnTarget: () -> GestureTargetKind?,
+        effects: inout [Effect]
+    ) -> Bool {
+        if case let .pinchAwaitingSecond(pending) = state {
+            settle(pending, effects: &effects)
+            return false
+        }
+        guard isTracking == false,
+              GestureCatalog.hasEnabledAction(.tap, disabled: configuration.disabledActions),
+              let kind = isOnTarget(),
+              let action = GestureSequence.resolveDoubleTap(on: kind).flatMap(enabled) else {
+            return false
+        }
+        effects.append(.commit(action))
+        return true
     }
 
     /// L'échéance du silence de fin de pincement, pour les états qui en ont
@@ -532,26 +626,22 @@ public struct GestureStateMachine: Sendable {
                 show(preview(swipes: t.steps, on: t.kind), effects: &effects)
             }
 
-        case var .pinch(p):
-            // Sans phase, le silence est le lever — et il est traité avant
-            // toute pause d'étape : `pinchSessionGap` ≤ `stepPause`, et à
-            // égalité c'est ce test-ci qui passe en premier.
+        case let .pinch(p):
+            // Sans phase, le silence est le lever. Un pincement n'enchaîne pas
+            // d'étapes sans lever les doigts : aucune action n'en a besoin, et
+            // en relâchant après avoir resserré, les doigts écartent un peu —
+            // « resserrer puis écarter » ne fermerait plus rien.
             if p.usesPhase == false, now >= p.lastEventAt + configuration.pinchSessionGap {
-                finishPinch(p, effects: &effects)
+                finishPinch(p, now: now, effects: &effects)
                 return
             }
             if now >= p.lastMovementAt + configuration.cancelTimeout {
                 abandon(pending: p.steps.isEmpty == false || p.candidate != nil, reason: .stillness, effects: &effects)
                 state = .pinchCancelled(lastEventAt: p.lastEventAt, usesPhase: p.usesPhase)
-            } else if let candidate = p.candidate, now >= p.lastMovementAt + configuration.stepPause {
-                p.steps.append(candidate)
-                p.candidate = nil
-                p.stepBase = p.lastMagnitude
-                p.stepPeak = 0
-                state = .pinch(p)
-                effects.append(.haptic(.step))
-                show(preview(pinches: p.steps, on: p.kind), effects: &effects)
             }
+
+        case let .pinchAwaitingSecond(pending):
+            if now >= pending.deadline { settle(pending, effects: &effects) }
 
         case let .pinchCancelled(lastEventAt, false), let .pinchPassThrough(lastEventAt, false):
             if now >= lastEventAt + configuration.pinchSessionGap { state = .idle }

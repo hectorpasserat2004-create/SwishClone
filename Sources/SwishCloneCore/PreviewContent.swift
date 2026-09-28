@@ -28,7 +28,7 @@ public enum PreviewContent: Equatable, Sendable {
         case .minimize: self = .light(.minimize)
         case .toggleFullScreen: self = .light(.fullScreen)
         case .close: self = .light(.close)
-        case .quitApp: self = .quitApp
+        case .quitApp, .quitWindowApp: self = .quitApp
         default:
             // Un écran de 1 000 points ramené à 1 : `WindowLayout` partage
             // au point entier, ce qui n'aurait pas de sens sur 1 × 1.
@@ -76,7 +76,7 @@ extension GestureAction {
         case .toggleFullScreen: return "Plein écran"
         case .close: return "Fermer la fenêtre"
         case .centerReduced: return "Centrer"
-        case .quitApp: return "Quitter \(appName ?? "l'app")"
+        case .quitApp, .quitWindowApp: return "Quitter \(appName ?? "l'app")"
         }
     }
 }
