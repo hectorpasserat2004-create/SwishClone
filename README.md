@@ -4,6 +4,21 @@ Utilitaire d'arrière-plan macOS qui contrôle les fenêtres au trackpad :
 swipe/pinch pour déplacer, redimensionner, maximiser ou minimiser la
 fenêtre active — inspiré de Swish.
 
+## Destination du projet
+
+SwishClone sert de banc d'essai. Les gestes sont intégrés aujourd'hui dans
+[bran](https://github.com/Martial4034/bran), qui fige chaque version
+(`exact:`). L'objectif final est de les proposer à
+[Vorssaint](https://github.com/vorssaint/vorssaint-utils), une boîte à
+outils macOS libre (GPL-3.0-or-later), par une pull request (voir son issue
+[#967](https://github.com/vorssaint/vorssaint-utils/issues/967), qui reprend
+la demande « gestes façon Swish » #579).
+
+Vorssaint n'accepte pas de dépendances externes et a déjà son propre moteur
+de placement (moitiés, tiers, quarts). Il ne s'agira donc pas d'ajouter ce
+paquet, mais de porter les gestes dans son code. SwishClone étant sous
+licence MIT, ce portage sous GPL est possible.
+
 ## Structure
 - `Sources/SwishCloneCore/` — logique pure, sans AppKit, testable en isolation :
   types de gestes (`FingerPosition`, `SwipeDirection`, `PinchDirection`,
